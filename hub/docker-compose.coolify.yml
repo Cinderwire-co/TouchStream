@@ -1,0 +1,33 @@
+# TouchStream Hub on Coolify (Docker Compose build pack)
+#   Base Directory:          /hub
+#   Docker Compose Location: /docker-compose.coolify.yml
+#
+# Coolify gives the dashboard a domain with HTTPS (SERVICE_FQDN_HUB_8080) and
+# generates the admin password (shown in the app's Environment Variables as
+# SERVICE_PASSWORD_ADMIN). Spokes reach the same domain for SRT on UDP 8890,
+# so its DNS record must point straight at the server (no Cloudflare proxy),
+# and UDP 8890 must be open in the server's firewall.
+services:
+  hub:
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      - SERVICE_FQDN_HUB_8080
+      - TOUCHSTREAM_ADMIN_PASSWORD=${SERVICE_PASSWORD_ADMIN}
+      - TOUCHSTREAM_PUBLIC_HOST=${TOUCHSTREAM_PUBLIC_HOST:-}
+      # A cloud server isn't on the spokes' network
+      - TOUCHSTREAM_DISCOVERY=0
+    ports:
+      - "8890:8890/udp"     # SRT from spokes
+      - "1935:1935"         # RTMP from OBS/ATEM (optional)
+    volumes:
+      - touchstream-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://127.0.0.1:8080/api/state"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  touchstream-data:

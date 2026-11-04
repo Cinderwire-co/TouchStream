@@ -1,0 +1,6 @@
+.DS_Store
+__pycache__/
+spoke/tools/.spoke.env
+spoke-shot*.png
+auto.crt
+auto.key

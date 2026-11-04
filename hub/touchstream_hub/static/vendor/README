@@ -1,0 +1,3 @@
+htm 3.1.1 (preact/standalone.module.js, bundles Preact + hooks) - Apache-2.0 - https://github.com/developit/htm
+hls.js 1.7.4 (dist/hls.light.min.js) - Apache-2.0 - https://github.com/video-dev/hls.js
+Both from the npm registry, sha512 integrity checked.

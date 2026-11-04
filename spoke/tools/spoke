@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# TouchStream dev helper: drive a spoke on your LAN from your computer.
+#
+#   tools/spoke deploy        copy this checkout to the spoke and restart the app
+#   tools/spoke restart       restart the app
+#   tools/spoke shot [file]   screenshot the spoke's screen (default: spoke-shot.png)
+#   tools/spoke tap X Y ...   tap the screen at X,Y (480x320, origin top-left) via a virtual touchscreen
+#   tools/spoke logs          follow the app's log
+#   tools/spoke install       run install.sh on the spoke from this checkout
+#   tools/spoke ssh [cmd...]  open a shell on the spoke, or run a command
+#
+# Settings come from the environment or tools/.spoke.env (git-ignored):
+#   SPOKE_HOST  user@host of the spoke   (default: touchstream@touchstream.local)
+#   SPOKE_KEY   SSH private key to use   (optional)
+#   SPOKE_DIR   spoke folder on the device (default: TouchStream/spoke, relative to home)
+#
+# Copyright (c) 2025 Will Reeves and TouchStream Contributors
+# Licensed under the MIT License - see LICENSE file for details
+
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+[ -f "$REPO/tools/.spoke.env" ] && . "$REPO/tools/.spoke.env"
+SPOKE_HOST="${SPOKE_HOST:-touchstream@touchstream.local}"
+SPOKE_DIR="${SPOKE_DIR:-TouchStream/spoke}"
+
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=8)
+[ -n "${SPOKE_KEY:-}" ] && SSH_OPTS+=(-i "$SPOKE_KEY" -o IdentitiesOnly=yes)
+
+remote() { ssh "${SSH_OPTS[@]}" "$SPOKE_HOST" "$@"; }
+sync_code() {
+    remote "mkdir -p $SPOKE_DIR"
+    rsync -az --delete --exclude .git --exclude .DS_Store --exclude 'tools/.spoke.env' \
+        -e "ssh ${SSH_OPTS[*]}" "$REPO/" "$SPOKE_HOST:$SPOKE_DIR/"
+}
+
+# Commands run inside the kiosk's Wayland session
+WAYLAND_ENV='export XDG_RUNTIME_DIR=/run/user/$(id -u) WAYLAND_DISPLAY=wayland-0;'
+
+cmd="${1:-help}"
+shift || true
+case "$cmd" in
+    deploy)
+        sync_code
+        remote 'sudo systemctl restart touchstream'
+        echo "Deployed and restarted"
+        ;;
+    restart)
+        remote 'sudo systemctl restart touchstream'
+        ;;
+    shot)
+        out="${1:-spoke-shot.png}"
+        remote "$WAYLAND_ENV grim -" > "$out"
+        echo "$out"
+        ;;
+    tap)
+        [ $# -ge 2 ] || { echo "usage: tools/spoke tap X Y [X Y ...]" >&2; exit 1; }
+        remote "sudo python3 $SPOKE_DIR/tools/virtual-touch.py $*"
+        ;;
+    logs)
+        remote 'journalctl -t touchstream -f -n 50 -o cat'
+        ;;
+    install)
+        sync_code
+        remote "cd $SPOKE_DIR && sudo TOUCHSTREAM_NO_REBOOT=${TOUCHSTREAM_NO_REBOOT:-0} bash install.sh"
+        ;;
+    ssh)
+        exec ssh "${SSH_OPTS[@]/BatchMode=yes/BatchMode=no}" -t "$SPOKE_HOST" "$@"
+        ;;
+    *)
+        sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+        ;;
+esac

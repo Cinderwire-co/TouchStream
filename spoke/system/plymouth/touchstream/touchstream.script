@@ -1,0 +1,42 @@
+# TouchStream boot splash (by Cinderwire)
+# Ink background, the mark fades in, then the ember core and its glow pulse.
+
+Window.SetBackgroundTopColor(0.055, 0.055, 0.055);
+Window.SetBackgroundBottomColor(0.055, 0.055, 0.055);
+
+glow = Image("glow.png");
+ring = Image("ring.png");
+core = Image("core.png");
+wordmark = Image("wordmark.png");
+eyebrow = Image("eyebrow.png");
+
+cx = Window.GetX() + Window.GetWidth() / 2;
+cy = Window.GetY() + Window.GetHeight() * 0.4;
+
+glow_sprite = Sprite(glow);
+glow_sprite.SetPosition(cx - glow.GetWidth() / 2, cy - glow.GetHeight() / 2, 0);
+ring_sprite = Sprite(ring);
+ring_sprite.SetPosition(cx - ring.GetWidth() / 2, cy - ring.GetHeight() / 2, 1);
+core_sprite = Sprite(core);
+core_sprite.SetPosition(cx - core.GetWidth() / 2, cy - core.GetHeight() / 2, 2);
+wordmark_sprite = Sprite(wordmark);
+wordmark_sprite.SetPosition(cx - wordmark.GetWidth() / 2, Window.GetY() + Window.GetHeight() * 0.69, 1);
+eyebrow_sprite = Sprite(eyebrow);
+eyebrow_sprite.SetPosition(cx - eyebrow.GetWidth() / 2, Window.GetY() + Window.GetHeight() * 0.8, 1);
+
+frame = 0;
+FADE_FRAMES = 25;     # ~0.5 s at plymouth's 50 Hz refresh
+PULSE_FRAMES = 100;   # ~2 s per ember pulse
+
+fun refresh_callback() {
+    frame++;
+    fade = Math.Min(frame / FADE_FRAMES, 1);
+    pulse = 0.55 + 0.45 * (0.5 + 0.5 * Math.Sin(frame * 2 * Math.Pi / PULSE_FRAMES));
+
+    ring_sprite.SetOpacity(fade);
+    wordmark_sprite.SetOpacity(fade);
+    eyebrow_sprite.SetOpacity(fade);
+    core_sprite.SetOpacity(fade * pulse);
+    glow_sprite.SetOpacity(fade * pulse);
+}
+Plymouth.SetRefreshFunction(refresh_callback);

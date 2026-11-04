@@ -1,0 +1,6 @@
+[Unit]
+Description=TouchStream nightly reboot
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl reboot

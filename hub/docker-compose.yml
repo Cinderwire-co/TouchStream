@@ -1,0 +1,28 @@
+# TouchStream Hub with plain Docker:
+#   docker compose up -d        then open http://<this machine>:8080
+#
+# Spokes publish video to UDP 8890 (SRT): open it in your firewall.
+# On Linux, `network_mode: host` (below, commented) also lets the hub find spokes
+# on your local network automatically; otherwise pair them with a code.
+services:
+  hub:
+    build: .
+    image: ghcr.io/cinderwire-co/touchstream-hub:latest
+    restart: unless-stopped
+    environment:
+      # Optional: set the admin password here instead of on first visit
+      TOUCHSTREAM_ADMIN_PASSWORD: ${TOUCHSTREAM_ADMIN_PASSWORD:-}
+      # Optional: the address spokes should send video to, if not the one they use for the dashboard
+      TOUCHSTREAM_PUBLIC_HOST: ${TOUCHSTREAM_PUBLIC_HOST:-}
+    ports:
+      - "8080:8080"         # dashboard
+      - "8890:8890/udp"     # SRT from spokes
+      - "1935:1935"         # RTMP from OBS/ATEM (optional)
+    volumes:
+      - touchstream-data:/data
+      # Optional: finished broadcasts (one folder each) in a folder on this machine
+      # - ./recordings:/data/Recordings
+    # network_mode: host    # Linux only: replaces `ports` and enables LAN discovery
+
+volumes:
+  touchstream-data:
