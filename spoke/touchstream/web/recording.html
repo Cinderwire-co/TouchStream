@@ -1,0 +1,232 @@
+<!doctype html>
+<!-- The page a phone opens from the spoke's QR code: watch a recording, trim it, download it.
+     Served by the spoke itself (api.py), so it works on the venue's network with no internet. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e0e0e">
+<title>TouchStream recording</title>
+<link rel="icon" href="/brand/touchstream_mark.png">
+<style>
+  @font-face { font-family: Bricolage; src: url(/brand/Bricolage-Regular.ttf); font-weight: 400; }
+  @font-face { font-family: Bricolage; src: url(/brand/Bricolage-SemiBold.ttf); font-weight: 600; }
+  @font-face { font-family: Bricolage; src: url(/brand/Bricolage-Bold.ttf); font-weight: 700; }
+  @font-face { font-family: JetBrains; src: url(/brand/JetBrainsMono-Medium.ttf); font-weight: 500; }
+  :root { --ink: #0e0e0e; --char2: #1a1a1a; --charcoal: #272727; --ash: #f2f2f3; --smoke: #8e8e93; --faint: #5e5e63;
+    --line: rgba(242, 242, 243, .14); --line-soft: rgba(242, 242, 243, .08); --ember: #fe5c09; --ember-hi: #ff7a2f;
+    --ember-soft: rgba(254, 92, 9, .18); --bad: #f87171; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--ink); color: var(--ash); }
+  body { font: 16px/1.45 Bricolage, system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); }
+  main { max-width: 640px; margin: 0 auto; display: grid; gap: 16px; }
+  header { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -.01em; }
+  header img { width: 26px; height: 26px; }
+  h1 { font-size: 22px; line-height: 1.2; margin: 0; letter-spacing: -.02em; }
+  .meta { color: var(--smoke); font-size: 14px; margin-top: 2px; }
+  .mono { font-family: JetBrains, ui-monospace, Menlo, monospace; font-weight: 500; font-variant-numeric: tabular-nums; }
+  video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 14px; display: block; }
+  .panel { background: var(--char2); border: 1px solid var(--line-soft); border-radius: 18px; padding: 16px; display: grid; gap: 14px; }
+  .eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--smoke); }
+  .track { position: relative; height: 56px; border-radius: 12px; background: var(--charcoal); touch-action: none; }
+  .sel { position: absolute; top: 0; bottom: 0; background: var(--ember-soft); border-top: 2px solid var(--ember);
+    border-bottom: 2px solid var(--ember); }
+  .handle { position: absolute; top: -6px; bottom: -6px; width: 34px; margin-left: -17px; display: grid; place-items: center;
+    touch-action: none; cursor: ew-resize; }
+  .handle::before { content: ''; width: 12px; height: 100%; border-radius: 6px; background: var(--ember);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
+  .playhead { position: absolute; top: 4px; bottom: 4px; width: 2px; margin-left: -1px; background: var(--ash); pointer-events: none; }
+  .times { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .time { display: grid; gap: 6px; }
+  .time b { font-size: 20px; }
+  button, .btn { font: inherit; font-weight: 600; border-radius: 12px; border: 1px solid var(--line); background: var(--charcoal);
+    color: var(--ash); padding: 11px 14px; text-align: center; text-decoration: none; cursor: pointer; display: block;
+    -webkit-tap-highlight-color: transparent; }
+  button:active, .btn:active { background: var(--char2); }
+  button.small { padding: 8px 10px; font-size: 14px; }
+  .primary { background: var(--ember); border-color: var(--ember); color: var(--ink); }
+  .primary:active { background: #b83f00; }
+  .ghost { background: transparent; }
+  button:disabled { opacity: .5; }
+  .summary { display: flex; justify-content: space-between; color: var(--smoke); font-size: 14px; }
+  .summary b { color: var(--ash); }
+  .bar { height: 4px; border-radius: 99px; background: var(--line-soft); overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--ember); transition: width .3s; }
+  .note { color: var(--smoke); font-size: 13px; margin: 0; }
+  .note:empty { display: none; }
+  .error { color: var(--bad); }
+  .center { text-align: center; padding: 48px 0; display: grid; gap: 10px; justify-items: center; }
+  .center img { width: 56px; opacity: .8; }
+  footer { color: var(--faint); font-size: 12px; text-align: center; margin-top: 8px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header><img src="/brand/touchstream_mark.png" alt="">TouchStream</header>
+
+  <div id="waiting" class="center"><img src="/brand/touchstream_mark.png" alt=""><b id="waiting-text">Getting the recording ready…</b>
+    <p class="note" id="waiting-note">This takes about a minute per hour of video.</p></div>
+
+  <section id="ready" hidden>
+    <div><h1 id="title"></h1><div class="meta" id="meta"></div></div>
+  </section>
+  <video id="video" playsinline preload="metadata" controls hidden></video>
+
+  <section id="trim" class="panel" hidden>
+    <div class="eyebrow">Trim</div>
+    <div class="track" id="track">
+      <div class="sel" id="sel"></div>
+      <div class="handle" id="h-start" aria-label="Start"></div>
+      <div class="handle" id="h-end" aria-label="End"></div>
+      <div class="playhead" id="playhead"></div>
+    </div>
+    <div class="times">
+      <div class="time"><span class="eyebrow">Starts</span><b class="mono" id="start"></b>
+        <button class="small" id="set-start">Start here</button></div>
+      <div class="time"><span class="eyebrow">Ends</span><b class="mono" id="end"></b>
+        <button class="small" id="set-end">End here</button></div>
+    </div>
+    <button class="ghost" id="play">▶ Play the clip</button>
+    <div class="summary"><span>Clip <b class="mono" id="length"></b></span><span id="size"></span></div>
+    <button class="primary" id="download">Download clip</button>
+    <div id="progress" hidden><div class="bar"><i id="bar"></i></div><p class="note" id="progress-text"></p></div>
+    <p class="note" id="message"></p>
+    <a class="btn ghost" id="whole" download>Download the whole recording</a>
+    <p class="note">The clip is copied straight from the recording, at full quality, so it can start up to 2 seconds
+      before the start you pick. Keep this page open while it downloads.</p>
+  </section>
+  <footer>Made by Cinderwire · TouchStream</footer>
+</main>
+<script>
+const token = location.pathname.split('/')[2];
+const base = `/r/${token}`;
+const $ = (id) => document.getElementById(id);
+const video = $('video');
+let info = null, range = [0, 0], playingClip = false;
+
+const fmt = (s) => {
+  s = Math.max(0, Math.round(s));
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+};
+const size = (n) => n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`;
+const duration = () => (isFinite(video.duration) && video.duration) || info.duration;
+
+function wait(text, note) {
+  $('waiting').hidden = false;
+  $('waiting-text').textContent = text;
+  $('waiting-note').textContent = note || '';
+  for (const id of ['ready', 'video', 'trim']) $(id).hidden = true;
+}
+
+async function load() {
+  let r;
+  try { r = await fetch(`${base}/info`); } catch (e) { return wait("Can't reach the spoke", 'Is this phone on the same network as it?'); }
+  if (!r.ok) return wait('This link has expired', 'Show the QR code again on the spoke.');
+  info = await r.json();
+  if (info.state === 'preparing') { wait('Getting the recording ready…', 'This takes about a minute per hour of video.'); return setTimeout(load, 1500); }
+  if (info.state !== 'ready') return wait("Can't open this recording", info.error || '');
+  $('waiting').hidden = true;
+  for (const id of ['ready', 'video', 'trim']) $(id).hidden = false;
+  $('title').textContent = info.title;
+  describe(info.duration);
+  document.title = `${info.title} · TouchStream`;
+  $('whole').href = `/download/${token}`;
+  if (!video.src) video.src = `${base}/video.mp4`;
+  range = [0, info.duration];
+  draw();
+}
+
+function describe(seconds) {
+  $('meta').textContent = `${info.where ? info.where + ' · ' : ''}${fmt(seconds)} · ${size(info.size)}`;
+}
+
+function draw() {
+  const d = duration();
+  const pct = (t) => `${(t / d) * 100}%`;
+  $('sel').style.left = pct(range[0]);
+  $('sel').style.width = pct(range[1] - range[0]);
+  $('h-start').style.left = pct(range[0]);
+  $('h-end').style.left = pct(range[1]);
+  $('playhead').style.left = pct(video.currentTime || 0);
+  $('start').textContent = fmt(range[0]);
+  $('end').textContent = fmt(range[1]);
+  $('length').textContent = fmt(range[1] - range[0]);
+  $('size').textContent = `about ${size(info.size * (range[1] - range[0]) / d)}`;
+  const whole = range[0] < 1 && range[1] > d - 1;
+  $('download').textContent = whole ? 'Download the recording' : 'Download clip';
+}
+
+function setRange(which, t) {
+  const d = duration();
+  t = Math.max(0, Math.min(d, t));
+  if (which === 0) range[0] = Math.min(t, range[1] - 1); else range[1] = Math.max(t, range[0] + 1);
+  draw();
+}
+
+// Dragging a handle (or tapping the track to look there)
+const timeAt = (x) => { const r = $('track').getBoundingClientRect(); return Math.max(0, Math.min(1, (x - r.left) / r.width)) * duration(); };
+for (const [id, which] of [['h-start', 0], ['h-end', 1]]) {
+  const h = $(id);
+  h.addEventListener('pointerdown', (e) => { e.stopPropagation(); h.setPointerCapture(e.pointerId); h.dragging = true; });
+  h.addEventListener('pointermove', (e) => { if (h.dragging) { setRange(which, timeAt(e.clientX)); video.currentTime = range[which]; } });
+  h.addEventListener('pointerup', () => { h.dragging = false; });
+}
+$('track').addEventListener('pointerdown', (e) => { video.currentTime = timeAt(e.clientX); draw(); });
+$('set-start').onclick = () => setRange(0, video.currentTime);
+$('set-end').onclick = () => setRange(1, video.currentTime);
+$('play').onclick = () => { playingClip = true; video.currentTime = range[0]; video.play(); };
+video.addEventListener('timeupdate', () => {
+  if (playingClip && video.currentTime >= range[1]) { video.pause(); playingClip = false; }
+  draw();
+});
+video.addEventListener('loadedmetadata', () => {
+  if (range[1] >= info.duration - 1) range[1] = duration();
+  describe(duration());
+  draw();
+});
+video.addEventListener('pause', () => { playingClip = false; });
+
+$('download').onclick = async () => {
+  const d = duration();
+  if (range[0] < 1 && range[1] > d - 1) { location.href = `/download/${token}`; return; }
+  $('download').disabled = true;
+  $('message').textContent = '';
+  try {
+    const r = await fetch(`${base}/clip`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ start: range[0], end: range[1] }) });
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.error || 'Something went wrong');
+    $('progress').hidden = false;
+    await follow(body.id);
+  } catch (e) {
+    $('message').replaceChildren(Object.assign(document.createElement('span'), { className: 'error', textContent: e.message }));
+  }
+  $('download').disabled = false;
+};
+
+async function follow(id) {
+  for (;;) {
+    const r = await fetch(`${base}/clip/${id}`);
+    if (!r.ok) throw new Error('This link has expired. Show the QR code again on the spoke.');
+    const c = await r.json();
+    $('bar').style.width = `${Math.round(c.progress * 100)}%`;
+    $('progress-text').textContent = c.state === 'ready' ? 'Ready' : `Making the clip… ${Math.round(c.progress * 100)}%`;
+    if (c.state === 'failed') throw new Error(c.error || "Couldn't make the clip");
+    if (c.state === 'ready') {
+      const url = `${base}/clip/${id}/file`;
+      $('message').innerHTML = `Downloading ${size(c.size)}. If it didn't start, <a href="${url}">tap here</a>.`;
+      location.href = url;
+      setTimeout(() => { $('progress').hidden = true; }, 1500);
+      return;
+    }
+    await new Promise((done) => setTimeout(done, 700));
+  }
+}
+
+load();
+</script>
+</body>
+</html>

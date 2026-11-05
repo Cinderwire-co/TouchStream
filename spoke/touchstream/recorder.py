@@ -10,11 +10,15 @@ so little is left to send when it ends. When the card runs low, the oldest
 recordings are deleted to make room: ones the hub already has first, then ones
 that only exist here. The recording in progress is never touched.
 
-Recordings can also be downloaded straight to a phone: the touchscreen shows a
-QR code with a short-lived link to the spoke's own web server. Phones need a
-regular MP4 (they can't play the TS segments, or an MP4 streamed as it's made),
-so opening a recording makes one in ~/.cache/touchstream/downloads first: about
-a minute per hour of video. It's deleted when the link expires.
+Recordings can also go straight to a phone: the touchscreen shows a QR code
+with a short-lived link to a page on the spoke's own web server, to watch the
+recording, trim it and download it. Phones need a regular MP4 (they can't play
+the TS segments, or an MP4 streamed as it's made), so opening a recording makes
+one in ~/.cache/touchstream/downloads first: about a minute per hour of video.
+
+A trim is copied out of that MP4 without re-encoding, so it's quick on the Pi
+and keeps the full quality; it starts at the keyframe (every 2 s) at or before
+the chosen start. Copies are deleted when the link expires.
 """
 import os
 import secrets
@@ -29,11 +33,12 @@ from . import hub
 RECORDINGS_DIR = Path(os.environ.get('TOUCHSTREAM_RECORDINGS', Path.home() / 'recordings'))
 MIN_FREE_BYTES = 4 * 1024 ** 3   # keep at least 4 GB free (about 45 minutes at 12 Mbps)
 SCAN_SECONDS = 10
-SHARE_SECONDS = 15 * 60          # how long a download link from the touchscreen works
+SHARE_SECONDS = 30 * 60          # how long a link from the touchscreen works after it was last used
 SHARE_DIR = Path.home() / '.cache' / 'touchstream' / 'downloads'
 
 _shares = {}                     # token -> (session name, expiry)
 _prepared = {}                   # session name -> {'size': bytes it was made from, 'state', 'error'}
+_clips = {}                      # clip id -> {'name', 'start', 'end', 'state', 'progress', 'error'}
 
 
 def sessions():
@@ -118,10 +123,19 @@ def share_state(name):
     return (job['state'], job['error']) if job else ('failed', None)
 
 
+def shared(token):
+    """The recording a link is for, keeping the link alive while it's used; None once it expired."""
+    entry = _shares.get(token)
+    if not entry or entry[1] < time.time():
+        return None
+    _shares[token] = (entry[0], time.time() + SHARE_SECONDS)
+    return next((s for s in sessions() if s['name'] == entry[0]), None)
+
+
 def shared_file(token, wait=600):
     """(session, MP4 path) for a download link, once its MP4 is ready; None if it expired or failed."""
     entry = _shares.get(token)
-    if not entry or entry[1] < time.time():
+    if not shared(token):
         return None
     deadline = time.time() + wait
     while share_state(entry[0])[0] == 'preparing' and time.time() < deadline:
@@ -130,6 +144,69 @@ def shared_file(token, wait=600):
     if not session or share_state(entry[0])[0] != 'ready':
         return None
     return session, _share_file(entry[0])
+
+
+def clip(token, start, end):
+    """Start copying start-end (seconds) of a shared recording into its own MP4. Returns the clip's id."""
+    found = shared_file(token, wait=0)
+    if not found:
+        raise ValueError('This link has expired. Show the QR code again on the spoke.')
+    session, source = found
+    start, end = max(0.0, float(start)), float(end)   # (past the end, the copy just stops there)
+    if end - start < 1:
+        raise ValueError('The clip needs to be at least a second long')
+    if free_bytes() < session['size'] * min(1, (end - start) / max(session['duration'], 1)) + 256 * 1024 ** 2:
+        raise ValueError('Not enough space on the card for this clip')
+    clip_id = secrets.token_urlsafe(6)
+    _clips[clip_id] = {'name': session['name'], 'start': start, 'end': end, 'state': 'preparing', 'progress': 0,
+                       'error': None}
+    threading.Thread(target=_cut, args=(clip_id, source), daemon=True).start()
+    return clip_id
+
+
+def _clip_file(clip_id):
+    return SHARE_DIR / f"{_clips[clip_id]['name']}.clip-{clip_id}.mp4"
+
+
+def _cut(clip_id, source):
+    job = _clips[clip_id]
+    target = _clip_file(clip_id)
+    partial = target.with_suffix('.part')
+    # Seeking before the input jumps to the keyframe at or before the start, and the copy runs from there
+    proc = subprocess.Popen(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-nostats', '-progress', 'pipe:1',
+                             '-ss', f"{job['start']:.3f}", '-to', f"{job['end']:.3f}", '-i', str(source),
+                             '-map', '0:v:0', '-map', '0:a?', '-c', 'copy', '-avoid_negative_ts', 'make_zero',
+                             '-movflags', '+faststart', '-f', 'mp4', str(partial)],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    for line in proc.stdout:
+        if line.startswith('out_time_us=') and line.strip()[12:].isdigit():
+            job['progress'] = min(0.99, int(line.strip()[12:]) / 1e6 / (job['end'] - job['start']))
+    if proc.wait() != 0:
+        print(f"Clip of {job['name']} failed: {proc.stderr.read().strip()}")
+        partial.unlink(missing_ok=True)
+        job.update(state='failed', error="Couldn't make the clip")
+        return
+    partial.replace(target)
+    job.update(state='ready', progress=1)
+
+
+def clip_state(token, clip_id):
+    """A clip of the recording this link is for: {'state', 'progress', 'size', 'error'}, or None."""
+    session = shared(token)
+    job = _clips.get(clip_id)
+    if not session or not job or job['name'] != session['name']:
+        return None
+    path = _clip_file(clip_id)
+    return {**{k: job[k] for k in ('state', 'progress', 'error', 'start', 'end')},
+            'size': path.stat().st_size if job['state'] == 'ready' and path.exists() else None}
+
+
+def clip_file(token, clip_id):
+    """(session, clip path) once the clip is ready."""
+    state = clip_state(token, clip_id)
+    if not state or state['state'] != 'ready':
+        return None
+    return shared(token), _clip_file(clip_id)
 
 
 def clean_shares():
@@ -144,6 +221,8 @@ def clean_shares():
         if name not in live and (_prepared.get(name) or {}).get('state') != 'preparing':
             path.unlink(missing_ok=True)
             _prepared.pop(name, None)
+    for clip_id in [c for c, job in _clips.items() if job['name'] not in live and job['state'] != 'preparing']:
+        del _clips[clip_id]
 
 
 _storage = {'at': 0}

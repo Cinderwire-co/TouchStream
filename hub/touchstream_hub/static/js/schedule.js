@@ -442,6 +442,8 @@ function EventRow({ event, spoke, showSpoke, onEdit, refresh }) {
       ${event.state === 'ended' && hasCopy && html`<a class="btn ghost small" href=${`#/transcript/${event.id}`}>${
         !event.transcript ? 'Transcript' : event.transcript.status === 'done' ? 'Transcript ✓'
         : event.transcript.status === 'failed' ? 'Transcript !' : `Transcribing ${Math.round(event.transcript.progress * 100)}%`}</a>`}
+      ${event.state === 'ended' && hasCopy && html`<a class="btn ghost small" href=${`#/edit/${event.id}/shorts`}>${
+        event.shorts ? `Shorts · ${event.shorts}` : 'Shorts'}</a>`}
       ${['live', 'ended'].includes(event.state) && html`<${DownloadMenu} copies=${event.recordings} edits=${event.edits} />`}
       ${hubEnv.local && event.folder && html`<${IconButton} icon="folder" label=${revealLabel()} onClick=${() => reveal({ event_id: event.id })} />`}
       ${!['ended', 'live'].includes(event.state) && !event.adhoc && html`<${IconButton} icon="edit" label="Edit" onClick=${() => onEdit(event)} />`}

@@ -23,9 +23,10 @@ EMBER = _hex('#FE5C09')
 EMBER_HI = _hex('#FF7A2F')
 EMBER_DEEP = _hex('#B83F00')
 EMBER_SOFT = _hex('#FE5C09', 0.15)
-# Status colours: real status only, never decoration
+# Status colors: real status only, never decoration
 OK = _hex('#4ADE80')
 BAD = _hex('#F87171')
+REC = _hex('#EF4444')     # the Record button
 
 SANS = 'Bricolage'        # regular + bold
 SANS_SEMI = 'BricolageSemi'

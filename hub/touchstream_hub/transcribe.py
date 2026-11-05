@@ -41,19 +41,23 @@ def load_wav(path):
 
 def captions_from_words(words):
     """Group timed words into caption-sized lines: at most ~6 s and two lines,
-    breaking early at the end of a sentence."""
+    breaking early at the end of a sentence. Each line keeps its words' timings (for shorts)."""
     out, cur = [], []
+
+    def line():
+        return {'start': round(cur[0].start, 2), 'end': round(cur[-1].end, 2),
+                'text': ''.join(x.word for x in cur).strip(),
+                'words': [[round(x.start, 2), round(x.end, 2), x.word.strip()] for x in cur if x.word.strip()]}
     for w in words:
         cur.append(w)
         text = ''.join(x.word for x in cur).strip()
         long = cur[-1].end - cur[0].start >= CAPTION_SECONDS or len(text) >= CAPTION_CHARS
         sentence_end = text.endswith(('.', '?', '!')) and cur[-1].end - cur[0].start >= 1.5
         if long or sentence_end:
-            out.append({'start': round(cur[0].start, 2), 'end': round(cur[-1].end, 2), 'text': text})
+            out.append(line())
             cur = []
     if cur:
-        out.append({'start': round(cur[0].start, 2), 'end': round(cur[-1].end, 2),
-                    'text': ''.join(x.word for x in cur).strip()})
+        out.append(line())
     return out
 
 
@@ -78,9 +82,11 @@ def to_txt(segments):
 
 
 def remap(segments, ranges):
-    """Shift transcript timings onto an edit that keeps only `ranges` of the recording."""
+    """Shift transcript timings onto an edit that keeps only `ranges` of the recording: (start, end)
+    back to back, or (start, end, where it lands in the edit) when other clips sit between them."""
     out, offset = [], 0.0
-    for a, b in ranges:
+    for a, b, *at in ranges:
+        offset = at[0] if at else offset
         for s in segments:
             start, end = max(s['start'], a), min(s['end'], b)
             if end - start > 0.2:
@@ -131,8 +137,17 @@ class Transcriber:
         self.jobs.put(event_id)
 
     def save(self, event_id, segments):
-        clean = [{'start': float(s['start']), 'end': float(s['end']), 'text': str(s['text'])[:2000]}
-                 for s in segments if str(s.get('text', '')).strip()]
+        clean = []
+        for s in segments:
+            text = str(s.get('text', ''))[:2000]
+            if not text.strip():
+                continue
+            line = {'start': float(s['start']), 'end': float(s['end']), 'text': text}
+            # Word timings stay while the line still has the same words
+            words = s.get('words') if isinstance(s.get('words'), list) else []
+            if words and ' '.join(str(w[2]) for w in words) == ' '.join(text.split()):
+                line['words'] = [[float(w[0]), float(w[1]), str(w[2])] for w in words]
+            clean.append(line)
         self.db.run('UPDATE transcripts SET segments = ?, edited = 1, updated_at = ? WHERE event_id = ?',
                     json.dumps(clean), time.time(), event_id)
 

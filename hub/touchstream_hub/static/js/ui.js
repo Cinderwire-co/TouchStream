@@ -4,7 +4,7 @@ import { MARK } from './lib.js';
 
 export const Brand = () => html`<div class="brand"><img src=${MARK} alt="" />TouchStream</div>`;
 
-// Simple line icons (24px grid), drawn in the current text colour
+// Simple line icons (24px grid), drawn in the current text color
 const PATHS = {
   gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14.5 3h-5l-.4 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2l.4 2.6h5l.4-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2Z',
   edit: 'M4 20h4L19 9l-4-4L4 16v4Zm9-13 4 4',
@@ -28,6 +28,16 @@ const PATHS = {
   speed: 'M4.2 17.5a9 9 0 1 1 15.6 0M12 14l4.5-4.5M12 15.5a1.5 1.5 0 1 0 0-3',
   spark: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z',
   send: 'M4 12l16-8-6 16-2.5-6.5z',
+  pause: 'M8 5v14M16 5v14',
+  undo: 'M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3',
+  redo: 'M15 14l5-5-5-5M20 9H9a5 5 0 0 0 0 10h3',
+  pointer: 'M6 3l12 9-5.5 1.2L15 19l-2.4 1-2.6-5.8L6 18z',
+  minus: 'M5 12h14',
+  prev: 'M18 6v12l-9-6zM6 6v12',
+  next: 'M6 6v12l9-6zM18 6v12',
+  'mark-in': 'M10 5H6v14h4M14 12h6',
+  'mark-out': 'M14 5h4v14h-4M4 12h6',
+  fit: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
 };
 export const Icon = ({ name, size = 18 }) => html`<svg width=${size} height=${size} viewBox="0 0 24 24" fill="none"
   stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

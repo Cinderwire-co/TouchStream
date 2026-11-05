@@ -36,6 +36,7 @@ PANEL_TIMEOUT = 120              # menus close themselves after 2 idle minutes
 SIGNAL_PROBE_INTERVAL = 3        # seconds between HDMI checks while there's no picture
 SOURCE_SWITCH_INTERVAL = 3       # minimum seconds between capture source changes
 HDMI_RETRY_AFTER = 30            # back off when HDMI is detected but gives no frames
+DISPLAY_CHECK = 3                # seconds between looks for a TV or monitor on the HDMI out
 UPLINK_SETTLE = 2                # seconds a new capture pipeline runs before the hub link connects
 
 
@@ -44,7 +45,7 @@ class TouchStreamRoot(FloatLayout):
         super().__init__(**kwargs)
         self.tex = Texture.create(size=(media.PREVIEW_WIDTH, media.PREVIEW_HEIGHT), colorfmt='rgb')
         self.tex.flip_vertical()
-        self.preview = PreviewView(self.tex, on_tap=lambda: self.push(MenuPanel(self)))
+        self.preview = PreviewView(self.tex, on_tap=lambda: self.push(MenuPanel(self)), on_record=self.toggle_record)
         self.add_widget(self.preview)
         self.stack = []
 
@@ -58,6 +59,7 @@ class TouchStreamRoot(FloatLayout):
         self._probing = False
         self._last_switch = 0
         self._hdmi_failed_until = 0
+        self._last_display_check = 0
         self.cpu = CpuUsage()
         self.cpu_percent = None
         self.speed = None            # last internet speed test, run when the hub asks
@@ -69,6 +71,8 @@ class TouchStreamRoot(FloatLayout):
         self.mode = 'off'
         self.encode = None        # None, or {'bitrate_kbps', 'record_dir'} for the capture pipeline
         self.record_dir = None    # current local recording session
+        self.wanted = (None, False)   # the encoding the hub (or the fallback) asked for: (bitrate, record)
+        self.manual_record = None     # when Record was pressed on the touchscreen, while recording that way
         self.uplink = media.Uplink()
         self.direct = fallback.DirectStream()   # straight to YouTube when the hub is unreachable
         self._direct_manual = False
@@ -219,8 +223,23 @@ class TouchStreamRoot(FloatLayout):
             self.speed = {**last, 'running': False, 'error': f'Speed test failed: {e}'}
         print(f"Speed test: {self.speed}")
 
+    def toggle_record(self):
+        """The touchscreen's Record button: record on this spoke, with or without a hub. A recording
+        started here carries on whatever the hub asks, until it's stopped here."""
+        self.manual_record = None if self.manual_record else time.time()
+        print("Recording started on the touchscreen" if self.manual_record else "Recording stopped on the touchscreen")
+        self._set_encode(*self.wanted)
+
+    def can_record(self):
+        """Record shows while there's a picture to record and the hub isn't already recording it."""
+        source = self.capture.source if self.capture and self.capture.running else None
+        return bool(self.manual_record) or (self.mode != 'live' and (self.has_signal or source == 'bars'))
+
     def _set_encode(self, bitrate_kbps, record):
         """Encode at this bitrate (None = preview only), recording locally if asked."""
+        self.wanted = (bitrate_kbps, record)
+        if self.manual_record:
+            bitrate_kbps, record = bitrate_kbps or fallback.load().get('bitrate_kbps') or 8000, True
         if record and not self.record_dir:
             self.record_dir = recorder.new_session()
             print(f"Recording locally to {self.record_dir}")
@@ -270,6 +289,9 @@ class TouchStreamRoot(FloatLayout):
     def _status(self):
         if self.direct.active:
             return 'Live · direct' + (' · Rec' if self.record_dir else ''), theme.EMBER
+        if self.manual_record and self.mode != 'live':
+            seconds = int(time.time() - self.manual_record)
+            return f'Rec {seconds // 3600}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}', theme.BAD
         if not credentials()[0]:
             return 'Not paired', theme.SMOKE
         if not self.hub.connected:
@@ -290,12 +312,14 @@ class TouchStreamRoot(FloatLayout):
             self.last_fps_time = now
         self.preview.set_signal(self.fps >= 1)
         self._update_signal(now)
+        self._check_display(now)
         self._choose_source(now)
         self._run_fallback(now)
         self.uplink.check()
         self.direct.check()
 
         self.preview.set_status(*self._status())
+        self.preview.set_record(self.can_record(), bool(self.manual_record))
         net = self.network
         if net['kind'] == 'ethernet':
             self.preview.network.text = f"ETH  {net['ip'] or ''}"
@@ -360,8 +384,8 @@ class TouchStreamRoot(FloatLayout):
             target = 'bars'
         elif self.has_signal:
             target = 'hdmi'
-        elif self.mode != 'off':
-            target = 'slate'          # keep the stream up with the holding screen
+        elif self.mode != 'off' or self.manual_record:
+            target = 'slate'          # keep the stream (or recording) going with the holding screen
         else:
             target = None             # idle without a source: the screen shows its own placeholder
         current = self.capture.source if self.capture.running else None
@@ -375,6 +399,22 @@ class TouchStreamRoot(FloatLayout):
         if target == 'hdmi':
             media.lock_signal()
         self._restart_capture(target)
+
+    def _check_display(self, now):
+        """A TV or monitor plugged into (or out of) the HDMI out: start or stop the clean feed to it."""
+        if not self.capture or now - self._last_display_check < DISPLAY_CHECK:
+            return
+        self._last_display_check = now
+        # Off unless switched on: through the capture it's a frame or two behind, too slow to work the source by
+        connector = media.hdmi_display() if load_config().get('clean_feed') else None
+        if connector != self.capture.hdmi_out:
+            print(f"HDMI out: {'display connected, sending the clean feed' if connector else 'display disconnected'}")
+            self.capture.hdmi_out = connector
+            self.capture.hdmi_failed = None          # plugged in again: give it another go
+            if self.capture.running:
+                self._restart_capture(self.capture.source)
+        elif self.capture.running and self.capture.feeding and self.capture.feeding == self.capture.hdmi_failed:
+            self._restart_capture(self.capture.source)   # the feed broke the pipeline: carry on without it
 
     def _restart_capture(self, source):
         if source == 'hdmi' and self.signal_size:
@@ -408,7 +448,7 @@ class TouchStreamRoot(FloatLayout):
     def _check_screen_sleep(self):
         if self.screen_asleep:
             return
-        if self.mode != 'off':
+        if self.mode != 'off' or self.manual_record:
             self._record_activity()
             return
         if time.time() - self.last_activity_time >= SCREEN_SLEEP_TIMEOUT:

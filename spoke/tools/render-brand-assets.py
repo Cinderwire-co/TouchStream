@@ -39,13 +39,13 @@ def split_mark(size):
 
 
 def core_offset(core):
-    """How far the ember core's middle sits from the middle of the mark (it's left of centre)."""
+    """How far the ember core's middle sits from the middle of the mark (it's left of center)."""
     left, top, right, bottom = core.getbbox()
     return (left + right - core.width) // 2, (top + bottom - core.height) // 2
 
 
 def glow(size, radius, alpha, offset=(0, 0)):
-    """A soft ember glow, centred `offset` from the middle of the image so that
+    """A soft ember glow, centered `offset` from the middle of the image so that
     centring the image on the mark puts the glow behind the core."""
     dx, dy = offset
     img = Image.new('RGBA', (size + 2 * abs(dx), size + 2 * abs(dy)))

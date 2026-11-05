@@ -33,15 +33,30 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
   - Deleting, publishing, going live and ending ask first.
   - Its key is offered at setup, with Skip; without one it's off and nothing is sent.
   - Tested with a scripted OpenRouter; not yet with a real key.
+- Record on the spoke without a hub: a Record button on the touchscreen (two taps to stop). The QR code opens a page
+  served by the spoke to watch, trim and download, with keyframe trims and no re-encode (tested on the dev Pi).
+  Fixed on the way: a capture restart mid-recording wrote over the session's first part.
+- The editor, as a linear editor: tracks for video, its linked sound (unlink for L-cuts), music and titles, plus a
+  color adjustment layer.
+  - Clips sit where they're put: deleting leaves a gap until it's closed; trims and moves happen in place.
+  - A cut tool, transitions on cuts (FFmpeg xfade, centered on the cut, so timing never changes), fade handles, undo.
+  - A media library (intros, slides, logos, music) and brands in Settings (an intro, an outro, a watermark; per
+    channel).
+  - The assistant's `edit_video` does all of it, and on the editor page leaves a draft that appears on the timeline.
+  - Dashboard files load from versioned addresses, so an update always shows.
+- Shorts (hub): pick a moment by its sentences, up to 3 minutes.
+  - Framing follows the speaker (YuNet face detection on ONNX Runtime, linked into tracks, a camera-operator path
+    with a dead zone, easing and cuts after cutaways), or shows the whole picture over a blur.
+  - Five fixed caption styles drawn with Pillow (so any FFmpeg works) with the spoken word lit, and six accents.
+  - Pauses become jump cuts; it publishes as a YouTube Short; MCP tools `make_short` and `publish_short`.
+  - Transcripts now keep each word's timing.
 - The TouchStream mark (`brand/touchstream_mark.py`): an ember play shape sending out arcs of signal, in the Cinderwire mark's chipped-shard style. It's on the dashboard, favicon, Mac app icon, boot splash, holding screen and touchscreen. "Made by Cinderwire" sits on the sign-in page and in Settings.
 
 ## Next
 
 1. **Installers without a terminal**: a signed Mac .pkg and a Windows installer, plus a Linux systemd test on a real
    machine.
-2. **Record on the spoke without a hub**: a Record button on the touchscreen. The QR code opens a small page served by the spoke to trim and download.
-   - Trims are keyframe-accurate (every 2 s) with no re-encode, so the Pi stays fast.
-   - Fades, cuts in the middle and publishing stay on the hub.
+2. **Search across everything** (below).
 3. **Fan control on the spoke** (needs the right fan; see "Parts list"):
    - Today the fan is wired to 5 V and runs flat out all the time; nothing can slow it.
    - With a fan that has a control wire (or a 2-wire fan plus a small transistor) on GPIO 12 or 13 (pins 32/33, clear of the screen's header), the installer adds the `pwm-gpio-fan` overlay. The fan then stays off when cool and steps up through four speeds as the CPU warms (about 55 °C to 75 °C).
@@ -78,17 +93,56 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 - Transcripts are split into passages and embedded. A local embedding model works offline; sqlite-vec keeps it all in the hub's one database.
 - One search box across all broadcasts. Results jump to the moment in the recording, and the editor opens there.
 
-## Shorts and reels (long road, all on the hub)
+## The editor: still to come
 
-- **Pick a moment** from the transcript or search. The cut follows sentence boundaries.
-- **Framing**, two choices:
-  - *Fill*: a vertical 9:16 crop that follows the speaker with face and body tracking, smoothed so it doesn't jitter.
-  - *Fit*: the whole 16:9 picture in the middle, with the top and bottom filled by a blurred, enlarged copy of the same video.
-- **Captions burned in**, in 4–5 fixed styles only, so nothing off the system looks bad.
-  - Each style sets font, colour, outline or box, position and word highlighting.
-  - Users pick a style and an accent colour, not free-form settings.
-- **Smart silence cutting** (optional): remove pauses longer than a threshold, with short crossfades.
-- Export the file, or upload it as a YouTube Short with its own title.
+- Drag media from the library straight onto the timeline; volume for each sound clip; music that ducks under speech.
+- A second video track for picture-in-picture and logos that come and go; keyframes for moves and zooms.
+- Transitions previewed in the browser (today: dips show, dissolves and wipes show as a plain cut until rendered).
+- Brands with their own title colors and font, and brands on shorts (watermark, end card).
+- Export presets (1080p, 720p for smaller uploads, audio only for podcasts).
+
+## The spoke: still to come
+
+- A confidence monitor on the Pi's own HDMI port (the code is there behind `clean_feed` in the config, off by
+  default). It's a frame or two behind the source, so it's for watching, not for working a mouse; for that, use an HDMI
+  splitter in front of the spoke (see docs/spoke.md). Before it's switched on: a setting, and test it after a source
+  switch, since the display output and the hardware converter must be let go of cleanly every time.
+- Headphones on the 3.5 mm jack to hear what's being streamed (it's output only: no input).
+- A USB audio adapter as the sound source, for a feed straight from the soundboard.
+- HDMI sound without soldering. The TC358743 boards send sound over separate I2S pins, never the ribbon, and the Pi's
+  clock pin (12) sits under the 3.5" screen. Options: a board with an audio plug (JST-GH 5-pin to Dupont) plus a DSI
+  screen that leaves the GPIO free; or a USB 3.0 capture card with HDMI loop-out (sound over USB, zero-lag loop-out).
+- An off-the-shelf spoke, one box with nothing to assemble: no screen or HDMI out needed, run from the hub and a phone
+  page, at about $40. Candidates:
+  - Luckfox PicoKVM (about $38), the pick: RV1106 camera chip with a hardware H.264 encoder, 1080p60 capture,
+    microSD, Ethernet, open Buildroot SDK. Its TC358743 has I2S wired inside, but HDMI sound isn't finished in its
+    driver (a user measured the pitch 1.29× too fast, which looks like an audio clock setting we can fix with the open
+    SDK). With 256 MB, one core and 100 Mbps it needs a lean native spoke (Go or C).
+  - Over budget: the Sipeed NanoKVM Pro (about $69–119; HDMI sound, loop-out, gigabit, 1 GB) and the GL.iNet Comet
+    (about $80; HDMI sound works, vendor firmware).
+  - Not these: the original NanoKVM (SG2002) and JetKVM have no HDMI sound.
+  Whichever box, it speaks the same hub protocol: capture, encode, SRT out, segment recording, upload, and the phone
+  status/trim page. A PicoKVM is on order. Started in `lite/` (Go): the hub link, the SRT uplink, recording and
+  upload, the 240×240 screen, and recordings to phones (a list on the screen, a QR code each, the Pi's phone page to
+  watch, trim and save) work in an emulator (an ARMv7 container held to one core and 256 MB, replaying a clip as the
+  HDMI input). Still to do on the box: HDMI capture and the hardware encoder (it's sold as 1080p60, which the Pi
+  can't do: follow the hub's frame rate setting), HDMI sound, the screen on the real panel and its touch, ffmpeg on
+  the box for the phone copies, and its time zone (from the hub).
+- Wi-Fi for the PicoKVM, which only has Ethernet. Plan on a pocket travel router as its Wi-Fi: over Ethernet (no
+  software), or over one USB cable that powers the box too, with the box acting as a tethered phone (a USB network
+  gadget, NCM, which Windows, macOS and Linux all take without drivers). The same USB network also lets the box
+  borrow the network of the computer it's plugged into, and reach a hub running on it directly. On the box, also try
+  switching its USB-C port to host for a Wi-Fi stick (it's also the power input, so it may not work).
+- The PicoKVM's pin out (I2C, two serial ports, 3.3 V) can't carry network or video, but could drive a tally light or
+  a physical Record button.
+
+## Shorts: still to come
+
+- An optional manual nudge for the window when there's no face to follow (a wide shot, someone facing away).
+- Faces too small to find in a very wide shot: look again on tiles of a sharper frame.
+- Body tracking as well as faces, for a speaker who turns away for a while.
+- Shorts from the edited video, and suggested moments (the assistant picking quotable passages from the transcript).
+- Upload straight to Instagram and TikTok (today: download, then post).
 
 ## Later
 
@@ -110,6 +164,8 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 - Parts list with links, including the HDMI capture board and a fan with a control wire (see fan control above).
 - Remove the dev-only debug drop-in on the Pi (`touchstream.service.d/debug.conf`).
 - No default passwords anywhere.
+- Ship the SIL Open Font License with the Bricolage Grotesque and JetBrains Mono fonts (in `spoke/assets/fonts` and
+  `lite/internal/screen/assets`); the OFL requires it to travel with the fonts.
 - Make the GHCR image public.
 - Revisit the license (MIT for now; the goal is to keep the Cinderwire branding and stop rebranded forks).
 - Real-world tests: a real HDMI source and audio (including 50 fps and 29.97 sources), a real YouTube channel, and the QR download on Android and iPhone.

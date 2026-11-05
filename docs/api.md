@@ -41,16 +41,18 @@ For now, use Claude Code or another app that can send a header.
 
 **n8n**: add an **MCP Client Tool** node with the same URL, and the token as a Bearer header.
 
-The agent gets eleven tools:
+The agent gets thirteen tools:
 - `hub_overview`
 - `list_broadcasts`, `get_broadcast`
 - `schedule_broadcast` (once or repeating), `update_broadcast`, `delete_broadcast`
 - `go_live`, `end_live`
-- `get_transcript`, `edit_video`, `publish_video`
+- `get_transcript`, `edit_video` (cuts, fades, transitions, a color look, a brand and titles; render it, or leave
+  it on the editor's timeline as a draft), `publish_video`
+- `make_short`, `publish_short`
 
 It also gets a short brief of how things ripple: what YouTube does when you change, delete or publish. So you can ask
-"schedule our Sunday service every week at 10, adding the date to the title", or "cut the first ten minutes off
-Sunday's video and publish it".
+"schedule our Sunday service every week at 10, adding the date to the title", "cut the first ten minutes off
+Sunday's video and publish it", or "make a short of where he talks about walls and bridges".
 
 Agents on another network need to reach the hub. A hub on Coolify has an HTTPS address already; for one at home,
 use something like [Tailscale](https://tailscale.com).

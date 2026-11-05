@@ -1,5 +1,6 @@
 """Full-screen panels shown over the preview: menu, Wi-Fi list, password entry"""
 import os
+import subprocess
 import threading
 import time
 
@@ -12,7 +13,7 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.uix.image import Image
 from kivy.uix.scrollview import ScrollView
 
-from .. import VERSION, hub, recorder, wifi
+from .. import APP_DIR, VERSION, hub, recorder, wifi
 from ..config import load_config, save_config
 from ..system import device_ip, network_summary
 from . import theme
@@ -20,6 +21,7 @@ from .keyboard import Keyboard
 from .widgets import CwButton, IconButton, LockIcon, SignalBars, eyebrow, paint, text
 
 HEADER = 44
+FLIP_SCREEN = os.path.join(APP_DIR, 'system', 'flip-screen.sh')
 PAD = 16
 
 
@@ -89,18 +91,23 @@ class MenuPanel(Panel):
         self.recordings_button = CwButton('Recordings', on_press=lambda: nav.push(RecordingsPanel(nav)),
                                           size_hint=(None, None))
         self.bars_button = CwButton('', on_press=self._toggle_bars, size_hint=(None, None))
+        self.flip_button = CwButton('Flip screen', kind='ghost', on_press=self._toggle_flip,
+                                    size_hint=(None, None))
         self.reboot_button = CwButton('Reboot', kind='ghost', on_press=self._reboot,
                                       size_hint=(None, None))
+        # Flip and Reboot share the last row
         self.buttons = (self.wifi_button, self.hub_button, self.recordings_button, self.bars_button,
-                        self.reboot_button)
-        for button in self.buttons:
-            self.add_widget(button)
+                        (self.flip_button, self.reboot_button))
+        for row in self.buttons:
+            for button in (row if isinstance(row, tuple) else (row,)):
+                self.add_widget(button)
         # Where TouchStream comes from
         self.credit_mark = Image(source=theme.CINDERWIRE, size_hint=(None, None), size=(16, 16), opacity=0.8)
         self.credit = text('Made by Cinderwire · MIT License', size=10, color=theme.SMOKE, size_hint=(None, None))
         self.add_widget(self.credit_mark)
         self.add_widget(self.credit)
         self._confirm = None
+        self._flip_confirm = None
         self.bind(pos=self._layout, size=self._layout)
 
     def _layout(self, *_):
@@ -114,8 +121,11 @@ class MenuPanel(Panel):
             value.pos, value.size = (self.x + PAD, y), (col_w - PAD, 22)
             y -= 6
         bx, bw = self.x + col_w + 8, self.width - col_w - 8 - PAD
-        for i, button in enumerate(self.buttons):
-            button.pos, button.size = (bx, self.top - HEADER - 48 - i * 48), (bw, 40)
+        for i, row in enumerate(self.buttons):
+            row = row if isinstance(row, tuple) else (row,)
+            w = (bw - 8 * (len(row) - 1)) / len(row)
+            for j, button in enumerate(row):
+                button.pos, button.size = (bx + j * (w + 8), self.top - HEADER - 48 - i * 48), (w, 40)
         self.credit_mark.pos = (bx + 2, self.y + 11)
         self.credit.pos, self.credit.size = (bx + 24, self.y + 8), (bw - 24, 22)
 
@@ -142,6 +152,24 @@ class MenuPanel(Panel):
         cfg.update(test_pattern=not cfg.get('test_pattern'), test_pattern_at=time.time())
         save_config(cfg)
         self.on_open()
+
+    def _toggle_flip(self):
+        # For a spoke mounted the other way up. The panel itself turns (at boot), so it still draws
+        # top to bottom; turning the picture in software instead tears. Two taps, like Reboot
+        if self._flip_confirm:
+            done = subprocess.run(['sudo', '-n', 'sh', FLIP_SCREEN], capture_output=True, text=True)
+            print(done.stdout.strip() or done.stderr.strip())
+            if done.returncode == 0:
+                os.system('systemctl reboot')
+            else:
+                self.flip_button.text = "Couldn't flip"
+            return
+        self.flip_button.text = 'Flip & restart?'
+        self._flip_confirm = Clock.schedule_once(self._disarm_flip, 3)
+
+    def _disarm_flip(self, *_):
+        self._flip_confirm = None
+        self.flip_button.text = 'Flip screen'
 
     def _reboot(self):
         # Two taps: the first arms it for 3 seconds
@@ -491,14 +519,14 @@ def _qr_texture(url):
 
 
 class RecordingPanel(Panel):
-    """One recording: a QR code to download it to a phone, and delete."""
+    """One recording: a QR code to watch, trim and download it on a phone, and delete."""
 
     def __init__(self, nav, session, **kwargs):
         super().__init__(nav, _when(session), **kwargs)
         from kivy.uix.image import Image
         self.session = session
         # The QR code appears once the phone-friendly MP4 is made (seconds; about a minute per hour)
-        self.url = f'http://{device_ip()}:6077/download/{recorder.share(session["name"])}'
+        self.url = f'http://{device_ip()}:6077/r/{recorder.share(session["name"])}'
         self.qr_box = FloatLayout(size_hint=(None, None), opacity=0.12)   # a faint placeholder until ready
         paint(self.qr_box, (1, 1, 1, 1), radius=10)
         self.qr = Image(fit_mode='contain', size_hint=(None, None), opacity=0)
@@ -526,9 +554,9 @@ class RecordingPanel(Panel):
         if state == 'ready':
             self.qr.texture = _qr_texture(self.url)
             self.qr.opacity = self.qr_box.opacity = 1
-            self.title2.text = 'Scan to download'
-            self.info.text = ('Point your phone\'s camera at the code. The phone must be on the same network as '
-                              'this spoke. The link works for 15 minutes.')
+            self.title2.text = 'Scan with your phone'
+            self.info.text = ('To watch it, trim it and download it. The phone must be on the same network as '
+                              'this spoke.')
         else:
             self.title2.text = 'Can\'t download'
             self.info.text = error or 'Something went wrong preparing this recording.'

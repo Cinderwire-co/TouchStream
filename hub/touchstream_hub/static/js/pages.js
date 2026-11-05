@@ -5,6 +5,7 @@ import { Avatar, Switch } from './ui.js';
 import { Select } from './fields.js';
 import { confirmAction, toast } from './dialogs.js';
 import { AssistantSettings } from './assistant.js';
+import { BrandsSettings } from './brands.js';
 
 function YouTubeSettings() {
   const [yt, setYt] = useState(null);
@@ -242,6 +243,7 @@ export function SettingsPage() {
     <div class="page-head"><div><h1>Settings</h1><p class="muted">TouchStream Hub ${s.version}</p></div></div>
     <${YouTubeSettings} />
     <${AssistantSettings} changed=${() => dispatchEvent(new Event('ts-auth'))} />
+    <${BrandsSettings} />
     <${RecordingsFolder} s=${s} saved=${() => setMsg('Saved')} />
     <${OldRecordings} saved=${() => setMsg('Saved')} />
     <${TranscriptionSettings} options=${s.transcription} saved=${() => setMsg('Saved')} />

@@ -6,9 +6,12 @@ and sent to a local UDP port, and optionally recorded in 5-minute segments.
 A separate uplink pipeline relays that UDP stream to the hub over SRT, so a
 dropped internet connection never interrupts capture or the local recording.
 
+With a TV or monitor plugged into one of the Pi's HDMI ports, the capture also goes straight out to
+it, full screen and clean (no menus or meters): a confidence monitor, or a feed for a projector.
+
 Sources: 'hdmi' (the capture card), 'slate' (branded "Waiting for source"
 holding screen with a pulsing ember core, sent when there's no HDMI signal so
-viewers never see a dead stream) and 'bars' (colour bars, timecode and a
+viewers never see a dead stream) and 'bars' (color bars, timecode and a
 1 kHz tone). TOUCHSTREAM_TEST_SOURCE=1 pretends an HDMI source is connected
 and shows bars, for development without capture hardware.
 """
@@ -36,6 +39,9 @@ TEST_SOURCE = os.environ.get('TOUCHSTREAM_TEST_SOURCE') == '1'
 # dsnoop lets the level meter and the encoder share the HDMI audio input;
 # by name because the card number varies between boots
 AUDIO_DEVICE = 'dsnoop:CARD=tc358743,DEV=0'
+# The audio monitor hands the HDMI sound to each capture pipeline on this channel (see AudioMonitor)
+HDMI_AUDIO_CHANNEL = 'hdmi-audio'
+HDMI_AUDIO_CAPS = 'audio/x-raw,format=S16LE,layout=interleaved,rate=48000,channels=2'
 UPLINK_PORT = 5600            # local UDP hop between the encoder and the SRT uplink
 SEGMENT_SECONDS = 300         # local recording segment length
 SLATE = os.path.join(ASSETS_DIR, 'slate', 'slate.png')
@@ -46,6 +52,21 @@ SLATE_CORE_POS = (960 - 170, 460 - 170)   # matches tools/render-brand-assets.py
 # 480x270 = 1/16th the pixels of 1080p, much faster
 PREVIEW_WIDTH = 480
 PREVIEW_HEIGHT = 270
+
+
+def hdmi_display():
+    """The DRM connector id of an HDMI port with a display plugged in, for the clean feed; or None.
+    (Only free when the touchscreen is its own display: see system/kiosk.sh.)"""
+    for status in sorted(glob.glob('/sys/class/drm/card*-HDMI-A-*/status')):
+        try:
+            with open(status) as f:
+                if f.read().strip() != 'connected':
+                    continue
+            with open(os.path.join(os.path.dirname(status), 'connector_id')) as f:
+                return int(f.read())
+        except (OSError, ValueError):
+            continue
+    return None
 
 
 def find_video_device():
@@ -127,13 +148,11 @@ def _audio_source(source, for_stream=False):
     if source == 'slate':
         return "audiotestsrc is-live=true wave=silence"
     if for_stream:
-        # Mixed over silence: HDMI without audio (DVI adapters, muted sources) gives the
-        # capture card no audio clock, and a bare ALSA source would stall the whole stream
-        return ("audiomixer name=amix latency=200000000  "
-                "audiotestsrc is-live=true wave=silence ! audio/x-raw,rate=48000,channels=2 ! amix.  "
-                f"alsasrc device={AUDIO_DEVICE} ! audioconvert ! audioresample ! audio/x-raw,rate=48000,channels=2 ! "
-                "queue leaky=downstream max-size-time=500000000 ! amix.  amix.")
-    return f"alsasrc device={AUDIO_DEVICE}"
+        # From the audio monitor, which alone reads the card; silence whenever there's no sound
+        return f"interaudiosrc channel={HDMI_AUDIO_CHANNEL} ! {HDMI_AUDIO_CAPS}"
+    # Never the pipeline's clock: HDMI without sound (DVI adapters, muted sources, sound sent elsewhere)
+    # gives the card no audio clock, and one that never ticks would freeze everything
+    return f"alsasrc device={AUDIO_DEVICE} provide-clock=false"
 
 
 def _set_null(pipeline, what):
@@ -170,6 +189,9 @@ class CapturePipeline:
         self.rate = (30, 1)
         self.running = False
         self.started_at = 0
+        self.hdmi_out = None     # the HDMI connector to send the clean feed to, or None
+        self.hdmi_failed = None  # a connector whose display wouldn't take the feed: skipped until plugged in again
+        self.feeding = None      # the connector the running pipeline sends the clean feed to
         if not GST_OK:
             raise RuntimeError("GStreamer not available")
 
@@ -183,6 +205,14 @@ class CapturePipeline:
             "videoconvert n-threads=4 ! video/x-raw,format=RGB ! "
             "appsink name=preview emit-signals=true max-buffers=1 drop=true sync=false",
         ]
+        self.feeding = self.hdmi_out if self.hdmi_out != self.hdmi_failed else None
+        if self.feeding:
+            # The clean feed, on the HDMI display's own plane and scaled by the display hardware. Its planes
+            # take no packed YUV like the capture's UYVY, so the ISP converts it (almost no CPU)
+            parts.append("t. ! queue name=hdmi-queue leaky=downstream max-size-buffers=2 ! "
+                         "v4l2convert name=hdmi-convert ! video/x-raw,format=NV12 ! "
+                         f"kmssink name=hdmi-out driver-name=vc4 connector-id={self.feeding} "
+                         "can-scale=true sync=false async=false")
         if self.encode:
             bps = self.encode['bitrate_kbps'] * 1000
             fps = self.rate[0] / self.rate[1]
@@ -206,8 +236,11 @@ class CapturePipeline:
             ]
             if self.encode.get('record_dir'):
                 location = os.path.join(self.encode['record_dir'], 'part-%05d.ts')
+                # A pipeline restarted mid-recording (the source changed, say) carries on numbering
+                # its parts, instead of writing over the first ones
+                done = len(glob.glob(os.path.join(self.encode['record_dir'], 'part-*.ts')))
                 parts += [
-                    f"splitmuxsink name=rec muxer-factory=mpegtsmux "
+                    f"splitmuxsink name=rec muxer-factory=mpegtsmux start-index={done} "
                     f"max-size-time={SEGMENT_SECONDS * Gst.SECOND} location=\"{location}\"",
                     "vt. ! queue ! rec.video",
                     "at. ! queue ! rec.audio_%u",
@@ -228,6 +261,11 @@ class CapturePipeline:
     def _on_bus_error(self, bus, message):
         err, debug = message.parse_error()
         print(f"Capture pipeline error: {err.message} ({debug})")
+        source = message.src.get_name() if message.src else ''
+        if self.feeding and (source.startswith('hdmi-') or 'not-negotiated' in (debug or '')):
+            # The clean feed must never cost the capture: the app restarts it without the feed
+            print("HDMI out: the display won't take the clean feed; carrying on without it")
+            self.hdmi_failed = self.feeding
         if self.on_error:
             self.on_error(err.message)
 
@@ -358,13 +396,14 @@ class AudioMonitor:
             raise RuntimeError("GStreamer not available")
 
     def build_pipeline(self):
-        # Capture from ALSA, analyze levels, discard audio (no speaker on Pi)
-        # level element provides RMS/peak levels for metering
+        # Reads the card for the whole run and meters it, then hands the sound on to whichever capture
+        # pipeline is running. With no sound on the HDMI input, reading never returns and stopping hangs:
+        # in the capture pipeline that held it (and its encoder) forever, so it stays out of there
         pipeline_str = (
             f"{_audio_source('hdmi')} ! "
-            "audioconvert ! "
+            f"audioconvert ! audioresample ! {HDMI_AUDIO_CAPS} ! "
             "level name=level interval=50000000 ! "  # 50ms intervals
-            "fakesink"  # Discard audio - no speaker on Pi
+            f"interaudiosink channel={HDMI_AUDIO_CHANNEL} sync=false"
         )
         print(f"Building audio pipeline: {pipeline_str}")
         self.pipeline = Gst.parse_launch(pipeline_str)

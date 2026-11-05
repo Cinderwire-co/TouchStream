@@ -63,7 +63,7 @@ class Retention:
         files = self._files()
         total = sum(f['size'] for f in files)
         # Oldest broadcasts first; the newest few days are never touched by the size limit
-        recordings = sorted((f for f in files if f['kind'] != 'edit'), key=lambda f: f['aired'])
+        recordings = sorted((f for f in files if f['kind'] in ('hub', 'spoke')), key=lambda f: f['aired'])
         busy = self.library._in_use()   # being edited or transcribed right now
         youtube, kept, delete, freed = {}, set(), [], 0
         for f in recordings:

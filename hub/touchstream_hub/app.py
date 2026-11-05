@@ -1,5 +1,6 @@
 """TouchStream Hub web app: dashboard API, spoke API and the MediaMTX auth hook"""
 import asyncio
+import io
 import ipaddress
 import json
 import os
@@ -23,12 +24,14 @@ from . import VERSION, auth, desktop, discovery, platforms, recordings, settings
 from .assistant import Assistant, AssistantError
 from .broadcasts import THUMBNAIL_MAX, THUMBNAIL_TYPES, Broadcasts
 from .db import Database
-from .editor import Editor, filmstrip, keep_ranges, probe_duration
+from .editor import COLOR, PEAKS_PER_SECOND, Editor, filmstrip, normalize, placements, probe_duration, waveform
+from .media import Media
 from .library import Library, safe_name
 from .mediamtx import MediaMTX
 from .restream import Restreamer
 from .retention import Retention
 from .series import WEEKS, Series, zone
+from .shorts import Shorts, sentences
 from .speedtest import SpeedTest
 from .transcribe import MODELS, Transcriber, remap, to_srt, to_txt, to_vtt
 from .youtube import YouTube, YouTubeError
@@ -57,7 +60,9 @@ class Hub:
     library: Library
     retention: Retention
     editor: Editor
+    media: Media
     transcriber: Transcriber
+    shorts: Shorts
     discovery: discovery.Discovery
     http: httpx.AsyncClient
     pairing: dict         # code -> expiry time
@@ -90,10 +95,13 @@ async def lifespan(app):
     hub.library.start()
     hub.retention = Retention(hub.db, hub.library)
     hub.retention.start()
-    hub.editor = Editor(hub.db, hub.youtube, hub.library)
+    hub.media = Media(hub.db)
+    hub.editor = Editor(hub.db, hub.youtube, hub.library, hub.media)
     hub.editor.start()
     hub.transcriber = Transcriber(hub.db, hub.library)
     hub.transcriber.start()
+    hub.shorts = Shorts(hub.db, hub.youtube, hub.library, hub.transcriber)
+    hub.shorts.start()
     hub.discovery = discovery.Discovery(hub.db)
     hub.discovery.start()
     hub.speedtest = SpeedTest(hub.db)
@@ -125,10 +133,14 @@ How things ripple:
   /api/events/{id} changes one date and detaches it from the series.
 - A broadcast has one edit, always cut from an original recording; rendering again replaces it. Publishing
   uploads a new YouTube video (YouTube can't replace footage) and can make the live video private.
+- A broadcast can have any number of shorts: vertical videos of one moment, up to 3 minutes, published to
+  YouTube as Shorts.
 - Spokes keep a week of their schedule and stream straight to YouTube if the hub is down."""
 HIDDEN = re.compile(r'^/$|^/hls/|^/api/(spoke/|internal/|setup|login|logout|tokens|password|reveal|recordings-folder'
-                    r'|recordings/filmstrip|youtube/connect|assistant)')
-TAGS = [(r'^/api/events/[^/]+/(editor|edit|edits)|^/api/edits', 'Editing'), (r'^/api/events/[^/]+/transcript', 'Transcripts'),
+                    r'|recordings/filmstrip|recordings/waveform|youtube/connect|assistant|shorts/style|titles/preview'
+                    r'|events/[^/]+/editor/status|events/[^/]+/framing|events/[^/]+/caption-pages|shorts/caption)')
+TAGS = [(r'^/api/events/[^/]+/(editor|edit|edits)|^/api/edits|^/api/(media|brands)', 'Editing'), (r'^/api/events/[^/]+/transcript', 'Transcripts'),
+        (r'^/api/events/[^/]+/shorts|^/api/shorts', 'Shorts'),
         (r'^/api/(events|series)', 'Broadcasts'), (r'^/api/(spokes|spoke-defaults|discovered|pairing|destinations)', 'Spokes'),
         (r'^/api/(recordings|retention)', 'Recordings'), (r'^/api/youtube', 'YouTube'), (r'.', 'Hub')]
 
@@ -148,7 +160,32 @@ def describe_api():
 
 
 app.openapi = describe_api
-app.mount('/static', StaticFiles(directory=STATIC), name='static')
+def dashboard_version():
+    """Changes whenever a dashboard file does, so the page asks for its scripts at new addresses."""
+    newest = max(f.stat().st_mtime_ns for f in STATIC.rglob('*') if f.is_file())
+    return f'{VERSION}-{newest:x}'[-16:]
+
+
+@app.get('/static/v/{version}/{path:path}', include_in_schema=False)
+def versioned_file(version: str, path: str):
+    """A dashboard file at its versioned address (see index): never stale, so cached for good."""
+    target = (STATIC / path).resolve()
+    if not target.is_relative_to(STATIC.resolve()) or not target.is_file():
+        raise HTTPException(404)
+    return FileResponse(target, headers={'Cache-Control': 'public, max-age=31536000, immutable'})
+
+
+class DashboardFiles(StaticFiles):
+    """The dashboard's files. Browsers check for a newer copy every time (a quick 304 when there isn't
+    one), so an updated hub shows its new dashboard on the next reload."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers['Cache-Control'] = 'no-cache'
+        return response
+
+
+app.mount('/static', DashboardFiles(directory=STATIC), name='static')
 
 
 # ---- Auth helpers ----
@@ -230,7 +267,12 @@ def new_spoke(name):
 # ---- Pages ----
 @app.get('/')
 def index():
-    return FileResponse(STATIC / 'index.html')
+    # The scripts and styles load from an address with the dashboard's version in it, and the modules they
+    # import resolve under it too: after an update the browser fetches them anew, however it caches
+    base = f'/static/v/{dashboard_version()}/'
+    page = (STATIC / 'index.html').read_text().replace('/static/styles.css', base + 'styles.css').replace(
+        '/static/app.js', base + 'app.js')
+    return Response(page, media_type='text/html', headers={'Cache-Control': 'no-cache'})
 
 
 @app.get('/api/state')
@@ -518,6 +560,7 @@ def event_view(event, copies=None):
                       hub.db.all('SELECT id FROM edits WHERE event_id = ? ORDER BY id', event['id'])],
             'transcript': hub.db.one('SELECT status, progress, edited, language FROM transcripts WHERE event_id = ?',
                                      event['id']),
+            'shorts': hub.db.one('SELECT COUNT(*) AS n FROM shorts WHERE event_id = ?', event['id'])['n'],
             'thumbnail_url': f"/api/events/{event['id']}/thumbnail?v={event['thumbnail']}" if event['thumbnail'] else None}
 
 
@@ -821,9 +864,45 @@ def editor_source(event_id: int):
     if not event:
         raise HTTPException(404)
     copies = [{**c, 'duration': probe_duration(hub.library.resolve(c['path']))} for c in _event_copies(event)]
+    transcript = hub.transcriber.transcript(event_id)
+    done = transcript and transcript['status'] == 'done'
     return {'event': event_view(event, copies), 'copies': copies, 'channels': channel_list(),
             'edit': edit_view(hub.editor.current(event_id)) if hub.editor.current(event_id) else None,
-            'draft': json.loads(event['edit_draft']) if event['edit_draft'] else None}
+            'draft': json.loads(event['edit_draft']) if event['edit_draft'] else None,
+            # For the transcript and shorts tracks
+            'sentences': sentences(transcript['segments']) if done else None,
+            'transcript_status': transcript['status'] if transcript else None,
+            'suggestions': json.loads(transcript['suggestions']) if done and transcript.get('suggestions') else None,
+            'shorts': [short_view(s) for s in hub.shorts.for_event(event_id)], 'shorts_options': hub.shorts.options(),
+            'ai': hub.assistant.enabled(), 'media': [media_view(m) for m in hub.media.all()], 'brands': hub.media.brands(),
+            'channel_brand': next((r['brand_id'] for r in hub.db.all(
+                'SELECT c.brand_id FROM event_targets t JOIN youtube_channels c ON c.id = t.channel_id '
+                'WHERE t.event_id = ? AND c.brand_id IS NOT NULL', event_id)), None)}
+
+
+@app.get('/api/events/{event_id}/editor/status', dependencies=[Depends(admin)])
+def editor_status(event_id: int):
+    """What the editor polls while something renders: its edit and shorts."""
+    if not hub.broadcasts.event(event_id):
+        raise HTTPException(404)
+    edit = hub.editor.current(event_id)
+    return {'edit': edit_view(edit) if edit else None, 'shorts': [short_view(s) for s in hub.shorts.for_event(event_id)]}
+
+
+@app.post('/api/events/{event_id}/suggestions', dependencies=[Depends(admin)])
+async def suggest_shorts(event_id: int):
+    """Ask the assistant's model for moments that would make good shorts (needs an OpenRouter key)."""
+    event = hub.broadcasts.event(event_id)
+    transcript = hub.transcriber.transcript(event_id) if event else None
+    if not transcript or transcript['status'] != 'done':
+        raise HTTPException(400, 'Transcribe the broadcast first')
+    try:
+        moments = await hub.assistant.suggest_moments(event['title'], sentences(transcript['segments']))
+    except AssistantError as e:
+        raise HTTPException(400, str(e))
+    found = {'moments': moments, 'model': hub.assistant.config()['model'], 'made_at': time.time()}
+    hub.db.run('UPDATE transcripts SET suggestions = ? WHERE event_id = ?', json.dumps(found), event_id)
+    return found
 
 
 @app.put('/api/events/{event_id}/edit-draft', dependencies=[Depends(admin)])
@@ -831,7 +910,8 @@ def save_edit_draft(event_id: int, data: dict = Body()):
     """Keep the editor's unsaved work on a broadcast's edit, to pick up later."""
     if not hub.broadcasts.event(event_id):
         raise HTTPException(404)
-    draft = {'source': str(data.get('source', '')), 'spec': _edit_spec(data), 'saved_at': time.time()}
+    draft = {'source': str(data.get('source', '')), 'spec': _edit_spec(data), 'saved_at': time.time(),
+             'by': str(data.get('by') or '')}
     hub.db.run('UPDATE events SET edit_draft = ? WHERE id = ?', json.dumps(draft), event_id)
     return draft
 
@@ -840,6 +920,16 @@ def save_edit_draft(event_id: int, data: dict = Body()):
 def discard_edit_draft(event_id: int):
     hub.db.run('UPDATE events SET edit_draft = NULL WHERE id = ?', event_id)
     return {'ok': True}
+
+
+@app.get('/api/recordings/waveform/{relative:path}', dependencies=[Depends(admin)])
+def recording_waveform(relative: str):
+    """The recording's sound level, one byte (0-255) per 1/40 s, for the editor's audio track."""
+    path = hub.library.resolve(relative)
+    if not path:
+        raise HTTPException(404)
+    return FileResponse(waveform(path), media_type='application/octet-stream',
+                        headers={'X-Peaks-Per-Second': str(PEAKS_PER_SECOND), 'Cache-Control': 'max-age=3600'})
 
 
 @app.get('/api/recordings/filmstrip/{relative:path}', dependencies=[Depends(admin)])
@@ -853,8 +943,13 @@ def recording_filmstrip(relative: str):
 @app.post('/api/events/{event_id}/edits', dependencies=[Depends(admin)])
 def create_edit(event_id: int, data: dict = Body()):
     """Render the broadcast's edit, replacing any earlier one. Body: source (a recording's path from GET
-    /api/events/{id}/editor), in and out (seconds; out optional), cuts ([[start, end], ...] to remove),
-    fade_in, fade_out (seconds, up to 10), dip (seconds of black at each cut, up to 2)."""
+    /api/events/{id}/editor), then either
+    - clips: [{start, end, color: {brightness, contrast, saturation, warmth (-100..100)}}] in the recording's seconds,
+      in order; transitions: one per join, [{type: cut | dissolve | dip_black | dip_white | wipe | slide | circle,
+      duration}]; titles: [{text, sub, style: lower_third | title | caption | corner, start, end}] in the edited
+      video's seconds; or, simpler,
+    - in and out (seconds; out optional), cuts ([[start, end], ...] to remove), dip (seconds of black at each cut);
+    plus fade_in, fade_out (seconds, up to 10)."""
     event = hub.broadcasts.event(event_id)
     if not event or data.get('source') not in [c['path'] for c in _event_copies(event)]:
         raise HTTPException(400, 'Pick one of this broadcast\'s recordings')
@@ -866,13 +961,112 @@ def create_edit(event_id: int, data: dict = Body()):
 
 
 def _edit_spec(data):
+    """A clean edit from the editor (tracks), or the simple in/out/cuts form."""
+    def clip(c, video):
+        out = {'at': float(c.get('at') or 0), 'start': float(c.get('start') or 0), 'end': float(c['end'])}
+        if c.get('media'):
+            out['media'] = int(c['media'])
+        if c.get('link'):
+            out['link'] = str(c['link'])[:40]       # the editor's own: which audio goes with which video
+        if video and c.get('transition'):
+            out['transition'] = {'type': str(c['transition'].get('type') or 'cut'),
+                                 'duration': float(c['transition'].get('duration') or 0)}
+        return out
     try:
+        fades = {'fade_in': min(10.0, float(data.get('fade_in') or 0)), 'fade_out': min(10.0, float(data.get('fade_out') or 0))}
+        if 'video' in data or 'audio' in data:
+            return {'video': [clip(c, True) for c in data.get('video') or []][:1000],
+                    'audio': [clip(c, False) for c in data.get('audio') or []][:1000],
+                    'music': [{**clip(c, False), 'volume': float(c.get('volume', 0.3))} for c in data.get('music') or []][:50],
+                    'titles': [{'text': str(t.get('text', ''))[:120], 'sub': str(t.get('sub', ''))[:120],
+                                'style': str(t.get('style') or 'lower_third'), 'start': float(t['start']), 'end': float(t['end'])}
+                               for t in data.get('titles') or []][:100],
+                    'color': {k: float((data.get('color') or {}).get(k) or 0) for k in COLOR},
+                    'brand': int(data['brand']) if data.get('brand') else None, **fades}
         return {'in': float(data.get('in') or 0), 'out': float(data['out']) if data.get('out') else None,
                 'cuts': [[float(a), float(b)] for a, b in data.get('cuts', [])],
-                'fade_in': min(10.0, float(data.get('fade_in') or 0)), 'fade_out': min(10.0, float(data.get('fade_out') or 0)),
-                'dip': min(2.0, float(data.get('dip') or 0))}
-    except (TypeError, ValueError):
+                'dip': min(2.0, float(data.get('dip') or 0)), **fades}
+    except (TypeError, ValueError, KeyError, AttributeError):
         raise HTTPException(400, 'That edit has a time that isn\'t a number')
+
+
+# ---- The media library and brands (media.py) ----
+def media_view(m):
+    return {**m, 'url': f"/api/media/{m['id']}/file", 'poster': f"/api/media/{m['id']}/poster" if m['kind'] != 'audio' else None}
+
+
+@app.get('/api/media', dependencies=[Depends(admin)])
+def list_media():
+    """Videos, images and sound uploaded for edits, and the brands made from them."""
+    return {'media': [media_view(m) for m in hub.media.all()], 'brands': hub.media.brands()}
+
+
+@app.post('/api/media', dependencies=[Depends(admin)])
+async def upload_media(request: Request):
+    """Upload a video, image or sound file: the body is the file; X-File-Name says what it's called."""
+    try:
+        item = await hub.media.add(request.headers.get('x-file-name', 'upload'), request.stream())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return media_view(item)
+
+
+@app.patch('/api/media/{media_id}', dependencies=[Depends(admin)])
+def rename_media(media_id: int, name: str = Body(embed=True)):
+    if not hub.media.get(media_id):
+        raise HTTPException(404)
+    hub.media.rename(media_id, str(name).strip() or 'Untitled')
+    return media_view(hub.media.get(media_id))
+
+
+@app.delete('/api/media/{media_id}', dependencies=[Depends(admin)])
+def delete_media(media_id: int):
+    """Delete a library file. Edits that used it leave it out next time they're rendered."""
+    hub.media.delete(media_id)
+    return {'ok': True}
+
+
+@app.get('/api/media/{media_id}/file', dependencies=[Depends(admin)])
+def media_file(media_id: int):
+    path = hub.media.path(media_id)
+    if not path:
+        raise HTTPException(404)
+    return FileResponse(path)
+
+
+@app.get('/api/media/{media_id}/poster', dependencies=[Depends(admin)])
+def media_poster(media_id: int):
+    path = hub.media.poster(media_id)
+    if not path:
+        raise HTTPException(404)
+    return FileResponse(path, headers={'Cache-Control': 'max-age=86400'})
+
+
+@app.post('/api/brands', dependencies=[Depends(admin)])
+def create_brand(data: dict = Body()):
+    """A brand: name, intro and outro (media ids: a video, or an image shown intro_seconds), watermark (an image's
+    media id), watermark_corner (top_left | top_right | bottom_left | bottom_right), watermark_size (% of the width),
+    watermark_opacity (%), channel_ids (YouTube channels whose broadcasts use it)."""
+    try:
+        return hub.media.save_brand(None, data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.patch('/api/brands/{brand_id}', dependencies=[Depends(admin)])
+def change_brand(brand_id: int, data: dict = Body()):
+    if not hub.media.brand(brand_id):
+        raise HTTPException(404)
+    try:
+        return hub.media.save_brand(brand_id, data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete('/api/brands/{brand_id}', dependencies=[Depends(admin)])
+def delete_brand(brand_id: int):
+    hub.media.delete_brand(brand_id)
+    return {'ok': True}
 
 
 @app.get('/api/edits/{edit_id}', dependencies=[Depends(admin)])
@@ -960,12 +1154,181 @@ def download_transcript(event_id: int, fmt: str, edit: int = 0):
         if not version or version['event_id'] != event_id:
             raise HTTPException(404)
         source = hub.library.resolve(version['source'])
-        segments = remap(segments, keep_ranges(version['spec'], probe_duration(source)))
+        segments = remap(segments, placements(normalize(version['spec'], probe_duration(source), hub.editor.resolve)))
         name += ' - edited'
     write, media_type = writers[fmt]
     return Response(write(segments), media_type=media_type,
                     headers={'Content-Disposition': f'attachment; filename="{name}.{fmt}"'})
 
+
+
+# ---- Shorts (hub only) ----
+def short_view(short):
+    return {k: short[k] for k in ('id', 'event_id', 'title', 'spec', 'status', 'progress', 'duration', 'output',
+                                  'error', 'published', 'created_at')}
+
+
+def _short(short_id):
+    short = hub.shorts.short(short_id)
+    if not short:
+        raise HTTPException(404)
+    return short
+
+
+def _short_title(data, event):
+    return re.sub(r'[<>]', '', str(data.get('title') or event['title'])).strip()[:100] or event['title']
+
+
+def _short_source(event, data):
+    copies = _event_copies(event)
+    if data.get('source') not in [c['path'] for c in copies]:
+        raise HTTPException(400, "Pick one of this broadcast's recordings")
+
+
+@app.get('/api/events/{event_id}/shorts', dependencies=[Depends(admin)])
+def list_shorts(event_id: int):
+    """The broadcast's shorts, plus what's needed to make one: its recordings (with their length), its
+    transcript's sentences to pick a moment from, and the framings, caption styles and accents."""
+    event = hub.broadcasts.event(event_id)
+    if not event:
+        raise HTTPException(404)
+    copies = [{**c, 'duration': probe_duration(hub.library.resolve(c['path']))} for c in _event_copies(event)]
+    transcript = hub.transcriber.transcript(event_id)
+    found = sentences(transcript['segments']) if transcript and transcript['status'] == 'done' else None
+    return {'event': event_view(event, copies), 'copies': copies, 'sentences': found,
+            'transcript_status': transcript['status'] if transcript else None,
+            'shorts': [short_view(s) for s in hub.shorts.for_event(event_id)], 'channels': channel_list(),
+            'options': hub.shorts.options()}
+
+
+@app.post('/api/events/{event_id}/shorts', dependencies=[Depends(admin)])
+def create_short(event_id: int, data: dict = Body()):
+    """Make a short. Body: title, source (a recording's path from GET /api/events/{id}/shorts), start and end
+    (seconds in that recording, up to 3 minutes apart; use the start of a sentence and the end of one from GET
+    /api/events/{id}/shorts, so it begins and ends on whole sentences), framing (fill: follows the speaker | fit: the whole picture over a blurred copy),
+    style (a caption style, or none), accent (a color name), trim_pauses (take out pauses over 0.6 s)."""
+    event = hub.broadcasts.event(event_id)
+    if not event:
+        raise HTTPException(404)
+    _short_source(event, data)
+    try:
+        short_id = hub.shorts.create(event, _short_title(data, event), data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return short_view(hub.shorts.short(short_id))
+
+
+@app.get('/api/titles/preview.png', dependencies=[Depends(admin)])
+def title_preview(style: str = 'lower_third', text: str = '', sub: str = '', width: int = 1920, height: int = 1080):
+    """A title exactly as the edit will show it, for the editor's preview."""
+    from . import titles
+    out = io.BytesIO()
+    titles.draw({'style': style, 'text': text, 'sub': sub}, max(320, min(3840, width)), max(180, min(2160, height))).save(out, 'PNG')
+    return Response(out.getvalue(), media_type='image/png', headers={'Cache-Control': 'max-age=86400'})
+
+
+@app.post('/api/events/{event_id}/framing', dependencies=[Depends(admin)])
+async def short_framing(event_id: int, data: dict = Body()):
+    """How a 'fill' short of a moment will be framed, to preview it: {width, path [[t, center]], whole [[start,
+    end]]}. Body: source, start, end (seconds in the recording, up to 3 minutes apart)."""
+    event = hub.broadcasts.event(event_id)
+    if not event or not hub.shorts.options()['available']:
+        raise HTTPException(404)
+    _short_source(event, data)
+    start, end = float(data['start']), float(data['end'])
+    if not 0 < end - start <= 181:
+        raise HTTPException(400, 'Pick a moment up to 3 minutes long')
+    return await asyncio.to_thread(hub.shorts.framing_plan, hub.library.resolve(data['source']), start, end)
+
+
+@app.post('/api/events/{event_id}/caption-pages', dependencies=[Depends(admin)])
+def short_caption_pages(event_id: int, data: dict = Body()):
+    """What a short's captions will show, for the editor's preview: [{start, end, words: [{start, end, text}]}] in
+    the recording's time. Body: start, end, style."""
+    from . import captions, shorts
+    transcript = hub.transcriber.transcript(event_id)
+    style = captions.STYLES.get(data.get('style'))
+    if not transcript or transcript['status'] != 'done' or not style:
+        return []
+    words = shorts.words_between(transcript['segments'], float(data['start']), float(data['end']))
+    return [{'start': p[0]['start'], 'end': p[-1]['end'], 'words': p} for p in captions.pages(words, style)]
+
+
+@app.get('/api/shorts/caption.png', dependencies=[Depends(admin)])
+def short_caption(style: str, words: str, active: int = -1, accent: str = 'ember'):
+    """One caption exactly as a short shows it (a band the short's width), for the editor's preview."""
+    from . import captions
+    if style not in captions.STYLES or accent not in captions.ACCENTS:
+        raise HTTPException(404)
+    out = io.BytesIO()
+    captions.draw(words.split('\n')[:12], active if active >= 0 else None, captions.STYLES[style],
+                  captions.ACCENTS[accent]).save(out, 'PNG')
+    return Response(out.getvalue(), media_type='image/png', headers={'Cache-Control': 'max-age=86400'})
+
+
+@app.get('/api/shorts/style.png', dependencies=[Depends(admin)])
+def short_style_sample(style: str, accent: str = 'ember'):
+    """A sample of a caption style, for the dashboard's picker."""
+    from . import captions   # here: it needs Pillow, which comes with the transcribe extra
+    if style not in captions.STYLES or accent not in captions.ACCENTS:
+        raise HTTPException(404)
+    out = io.BytesIO()
+    captions.sample(style, captions.ACCENTS[accent]).save(out, 'PNG')
+    return Response(out.getvalue(), media_type='image/png', headers={'Cache-Control': 'max-age=86400'})
+
+
+@app.get('/api/shorts/{short_id}', dependencies=[Depends(admin)])
+def get_short(short_id: int):
+    return short_view(_short(short_id))
+
+
+@app.put('/api/shorts/{short_id}', dependencies=[Depends(admin)])
+def change_short(short_id: int, data: dict = Body()):
+    """Change a short. With only a title it's renamed; with anything else it's made again (the same body as
+    making one), and the new video replaces the old when it's ready."""
+    short = _short(short_id)
+    event = hub.broadcasts.event(short['event_id'])
+    if set(data) <= {'title'}:
+        hub.shorts.rename(short_id, _short_title(data, event))
+        return short_view(hub.shorts.short(short_id))
+    _short_source(event, data)
+    try:
+        hub.shorts.change(short_id, _short_title(data, event), data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return short_view(hub.shorts.short(short_id))
+
+
+@app.post('/api/shorts/{short_id}/publish', dependencies=[Depends(admin)])
+def publish_short(short_id: int, data: dict = Body()):
+    """Upload a short to YouTube as a Short. Body: channel_ids, title, description, privacy (#Shorts is
+    added to the description). YouTube allows about 6 uploads a day per Google project."""
+    short = _short(short_id)
+    if short['status'] != 'done' or not short['output']:
+        raise HTTPException(400, 'Wait for the short to finish first')
+    known = {c['id'] for c in hub.db.all('SELECT id FROM youtube_channels')}
+    channel_ids = [int(c) for c in data.get('channel_ids', [])]
+    if not channel_ids or not set(channel_ids) <= known:
+        raise HTTPException(400, 'Choose at least one connected channel')
+    title = re.sub(r'[<>]', '', str(data.get('title', ''))).strip()[:100]
+    if not title:
+        raise HTTPException(400, 'Give the short a title')
+    if data.get('privacy') not in ('public', 'unlisted', 'private'):
+        raise HTTPException(400, 'Choose who can see the short')
+    hub.shorts.publish(short_id, {'channel_ids': channel_ids, 'title': title, 'privacy': data['privacy'],
+                                  'description': re.sub(r'[<>]', '', str(data.get('description', '')))[:4900]})
+    return short_view(hub.shorts.short(short_id))
+
+
+@app.delete('/api/shorts/{short_id}', dependencies=[Depends(admin)])
+def delete_short(short_id: int):
+    """Delete a short and its video file (anything already on YouTube stays there)."""
+    _short(short_id)
+    try:
+        hub.shorts.delete(short_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {'ok': True}
 
 def _destination_fields(data, partial=False):
     fields = {}

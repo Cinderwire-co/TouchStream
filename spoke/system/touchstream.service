@@ -32,7 +32,8 @@ Environment=PYTHONUNBUFFERED=1
 # Fully transparent cursor theme: the SPI panel has no hardware cursor plane,
 # so the compositor would otherwise draw a pointer over the app
 Environment=XCURSOR_PATH=/usr/share/touchstream/cursors XCURSOR_THEME=default XCURSOR_SIZE=24
-ExecStart=/usr/bin/cage -d -s -- /usr/bin/python3 @INSTALL_DIR@/touchstream-spoke.py
+# cage, on the touchscreen only when it's its own display, so HDMI is free for a clean feed
+ExecStart=/bin/sh @INSTALL_DIR@/system/kiosk.sh
 Restart=always
 RestartSec=2
 

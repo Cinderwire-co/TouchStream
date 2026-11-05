@@ -10,7 +10,7 @@ from pathlib import Path
 
 from touchstream_hub import settings
 from touchstream_hub.db import Database
-from touchstream_hub.editor import keep_ranges, render_command
+from touchstream_hub.editor import render_command
 from touchstream_hub.library import Library, file_name, safe_name
 
 
@@ -134,16 +134,47 @@ class Filing(unittest.TestCase):
 
     def test_edit_renders_with_details_and_cover(self):
         event = self.db.one('SELECT * FROM events WHERE id = ?', self.event_id)
-        number, output = self.library.edit_target(event)
+        number, output = self.library.new_target(event, 'edit')
         spec = {'in': 0.2, 'out': 1.8, 'cuts': [[0.8, 1.0]], 'fade_in': 0.2}
-        ranges = keep_ranges(spec, 2)
-        cmd, _ = render_command(self.spoke_copy, spec, ranges, output, *self.library.embed_args(event, len(ranges)))
+        cmd, _ = render_command(self.spoke_copy, spec, 2, output, (), lambda n: self.library.embed_args(event, n))
         subprocess.run(cmd, check=True, capture_output=True)
         self.assertEqual(output.name, 'Sunday Service - Week 3 - edited.mp4')
         info = probe(output)
         self.assertEqual(info['format']['tags']['title'], 'Sunday Service: Week 3')
         self.assertEqual([s['codec_type'] for s in info['streams']], ['video', 'audio', 'video'])
         self.assertEqual(info['streams'][2]['disposition']['attached_pic'], 1)
+
+    def test_edit_with_tracks_transitions_titles_media_and_brand(self):
+        source = self.tmp / 'long.mp4'
+        make_clip(source, 8)
+        slide = self.tmp / 'slide.png'
+        from PIL import Image
+        Image.new('RGB', (640, 480), (200, 80, 20)).save(slide)
+        music = self.tmp / 'music.wav'
+        subprocess.run([settings.FFMPEG_BIN, '-v', 'error', '-f', 'lavfi', '-i', 'sine=f=220:d=6', str(music)], check=True)
+        library = {1: {'kind': 'image', 'path': str(slide), 'duration': None, 'has_audio': False},
+                   2: {'kind': 'audio', 'path': str(music), 'duration': 6.0, 'has_audio': True}}
+        # A slide, then two clips joined by a dissolve, a gap of black, and the sound running on under the
+        # second clip's picture (an L-cut)
+        spec = {'video': [{'at': 0, 'start': 0, 'end': 2, 'media': 1},
+                          {'at': 2, 'start': 0.5, 'end': 2.5, 'transition': {'type': 'dissolve', 'duration': 1.0}},
+                          {'at': 4, 'start': 3.0, 'end': 5.0}, {'at': 7, 'start': 6, 'end': 7.5}],
+                'audio': [{'at': 2, 'start': 0.5, 'end': 6.0}],
+                'music': [{'media': 2, 'at': 0, 'start': 0, 'end': 4, 'volume': 0.3}],
+                'titles': [{'text': 'Pastor Sam', 'sub': 'Sunday Service', 'style': 'lower_third', 'start': 2, 'end': 4}],
+                'color': {'warmth': 40}, 'brand': 1, 'fade_in': 0.3}
+        from touchstream_hub import titles
+        image = self.tmp / 'title.png'
+        titles.draw(spec['titles'][0], 320, 180).save(image)
+        output = self.tmp / 'edited.mp4'
+        brand = {'watermark': str(slide), 'corner': 'top_right', 'size': 10, 'opacity': 60}
+        cmd, total = render_command(source, spec, 8, output, [image], media=library.get, brand=brand)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr[-500:])
+        self.assertAlmostEqual(total, 8.5)
+        length = float(subprocess.run([settings.FFPROBE_BIN, '-v', 'error', '-show_entries', 'format=duration', '-of',
+                                       'csv=p=0', str(output)], capture_output=True, text=True).stdout)
+        self.assertAlmostEqual(length, 8.5, delta=0.1)   # gaps stay, and a transition doesn't change the timing
 
     def test_delete_removes_the_folder(self):
         self.library.file_ready()

@@ -45,14 +45,53 @@ The screen shows the live picture with the audio levels, whether the spoke is li
 CPU. With no HDMI signal it shows a "Waiting for source" screen. While you're live, viewers see that screen too, so
 they never get a frozen picture.
 
-Tap anywhere for the menu:
+The round **Record** button at the bottom right records on the spoke, with or without a hub: for a talk, a rehearsal
+or anything you didn't schedule. It shows while there's a picture. The top bar counts the time while it records. To
+stop, tap it twice, so a stray touch never ends a recording.
+
+Tap anywhere else for the menu:
 
 - **Wi-Fi**: pick a network and type its password.
 - **Hub**: the hub it's paired with, or pair it with one.
-- **Recordings**: what's on the card. Tap one for a QR code: scan it with a phone on the same network to download it.
-  The spoke first makes a phone-friendly copy, which takes about a minute per hour of video.
-- **Test pattern**: colour bars with a running clock, to test the stream without a source.
+- **Recordings**: what's on the card. Tap one for a QR code, and scan it with a phone on the same network (see
+  below).
+- **Test pattern**: color bars with a running clock, to test the stream without a source.
 - **Reboot**.
+
+## A screen that shows the source
+
+To work a computer or switcher with a second screen on it, put an **HDMI splitter** (1 in, 2 out) in front of the
+spoke: one output to the spoke, the other to the screen. The screen gets the source directly, with no delay and at
+its full refresh rate. Pick a splitter that sends the spoke's EDID (or lets you choose 1080p), so the source sends a
+picture the spoke can capture.
+
+Don't use the Pi's own micro-HDMI ports for this. Everything there has been through the capture first, so it's a
+frame or two behind, and it's too slow to work a mouse by.
+
+## Sound
+
+The spoke takes the sound that comes over HDMI with the picture. If the source sends its sound elsewhere (or sends
+none), the stream carries silence and the picture is unaffected. The 3.5 mm jack is output only, so it can't take a
+microphone or a mixer feed.
+
+The ribbon cable carries only the picture. The sound leaves the capture board on a row of pins (often bare holes to
+solder) and takes four wires to the Pi's GPIO header:
+
+| Capture board | Pi pin    | (GPIO)            |
+|---------------|-----------|-------------------|
+| SCK           | 12        | GPIO18, PCM clock |
+| WFS           | 35        | GPIO19, PCM frame |
+| SD            | 38        | GPIO20, PCM data  |
+| GND           | 39        | ground            |
+
+Leave the board's other pins (3V3, RST, OSCK, IR, INT) unconnected. The touchscreen covers pins 1 to 26, pin 12
+included, so solder that wire to pin 12 on the underside of the Pi, or fit a GPIO splitter board between the Pi and
+the screen. Pins 35, 38 and 39 stay uncovered.
+
+## Upside down
+
+Mounted the other way up? **Settings › Flip screen** (tap it twice) turns the screen and its touch input around, and
+the spoke restarts to do it. The Pi has no orientation sensor, so it's a setting rather than automatic.
 
 ## Its own recordings
 
@@ -62,6 +101,22 @@ has everything, and it catches up once the connection is back.
 
 When the card fills, the spoke deletes its oldest recordings: ones the hub already has first, and never the one being
 recorded. The Home page shows each spoke's free space and any recordings the hub doesn't have yet.
+
+Recordings made with the Record button upload to the hub too, when the spoke is paired with one.
+
+## Recordings on your phone
+
+Scanning a recording's QR code opens a page on the phone, served by the spoke itself, so it works on the venue's
+network with no internet:
+
+- watch the recording;
+- trim it: drag the two handles, or play to the spot and tap **Start here** or **End here**;
+- **Download clip** saves just that part; **Download the whole recording** saves everything.
+
+The spoke first makes a phone-friendly copy, which takes about a minute per hour of video; the QR code appears once
+it's ready. A clip is copied out without re-encoding, so it's quick and keeps the full quality. It can start up to 2
+seconds before the start you pick, at the nearest keyframe. For fades, cuts in the middle or YouTube, use the hub's
+editor. The link stops working 30 minutes after it was last used.
 
 ## When the hub is down
 

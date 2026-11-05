@@ -21,7 +21,7 @@ MODELS = [('anthropic/claude-haiku-5.5', 'Claude Haiku 5.5', 'Fast and low cost'
           ('anthropic/claude-sonnet-5.5', 'Claude Sonnet 5.5', 'Smarter, costs more'),
           ('openai/gpt-5.6-luna', 'GPT-5.6 Luna', 'OpenAI, low cost'),
           ('google/gemini-3.8-flash', 'Gemini 3.8 Flash', 'Google, low cost')]
-CONFIRM = {'delete_broadcast', 'publish_video', 'go_live', 'end_live'}   # these ask first
+CONFIRM = {'delete_broadcast', 'publish_video', 'publish_short', 'go_live', 'end_live'}   # these ask first
 MAX_STEPS = 12          # tool calls per question
 MAX_RESULT = 12000      # characters of a tool's result the model sees
 
@@ -29,7 +29,21 @@ PERSONA = """You're the assistant inside the TouchStream Hub dashboard, talking 
 church or venue volunteer, not a technical person). Do what they ask with the tools, rather than explaining how to
 click through the dashboard. Look things up before acting; don't guess ids. Keep replies short and plain: say what
 you did, or ask one clear question if something's missing. Times are the hub's local time: it's now {now}.
-They're on: {page}."""
+They're on: {page}. In the video editor, edit with edit_video render=false: your change goes on their timeline
+for them to see and render, unless they ask you to render it."""
+
+
+SUGGEST = """You pick moments from the transcript of a broadcast ("{title}") that would make strong vertical shorts
+for YouTube Shorts, Instagram Reels and TikTok. It's often a church service, a talk or an event.
+
+A good moment stands on its own without the rest: one clear point, story, quote, joke or moving line. It starts at the
+start of a thought and ends on a strong line. Each is 20 to 75 seconds, never over 170. Skip greetings,
+announcements, housekeeping and song lyrics unless they're remarkable.
+
+The transcript is numbered by sentence, with the time each starts. Pick up to 6 moments, best first, not
+overlapping. Reply with JSON only, no other text:
+{{"moments": [{{"from": <first sentence number>, "to": <last sentence number>, "title": "<punchy title, at most 60
+characters>", "why": "<one short sentence>"}}]}}"""
 
 
 class AssistantError(Exception):
@@ -105,10 +119,40 @@ class Assistant:
         return {'messages': messages, 'reply': "That took more steps than I'm allowed in one go. Shall I carry on?",
                 'pending': None, 'steps': steps}
 
-    async def _complete(self, config, messages, tools):
+    # ---- Suggesting moments for shorts ----
+    async def suggest_moments(self, title, sentences):
+        """Moments of a broadcast that would make good shorts, picked from its transcript's sentences
+        ([{start, end, text}]): [{start, end, title, why}], best first."""
+        config = self.config()
+        if not config.get('api_key'):
+            raise AssistantError('Suggestions use the assistant: add an OpenRouter key in Settings')
+        if not sentences:
+            return []
+        numbered = '\n'.join(f"[{i}] ({int(s['start']) // 60}:{int(s['start']) % 60:02d}) {s['text']}"
+                             for i, s in enumerate(sentences))[:150000]
+        message = await self._complete(config, [{'role': 'system', 'content': SUGGEST.format(title=title)},
+                                                {'role': 'user', 'content': numbered}])
+        text = message.get('content') or ''
+        try:
+            picked = json.loads(text[text.index('{'):text.rindex('}') + 1])['moments']
+        except (ValueError, KeyError, TypeError):
+            raise AssistantError("The model's suggestions didn't come back in a form I could read; try again")
+        moments = []
+        for m in picked if isinstance(picked, list) else []:
+            try:
+                first, last = sorted((int(m['from']), int(m['to'])))
+                start, end = sentences[first]['start'], sentences[last]['end']
+            except (KeyError, TypeError, ValueError, IndexError):
+                continue
+            if 8 <= end - start <= 180 and not any(start < o['end'] and end > o['start'] for o in moments):
+                moments.append({'start': start, 'end': end, 'title': str(m.get('title') or '')[:80].strip(),
+                                'why': str(m.get('why') or '')[:200].strip()})
+        return moments[:6]
+
+    async def _complete(self, config, messages, tools=None):
         try:
             resp = await self.http.post(f'{OPENROUTER}/chat/completions', json={
-                'model': config['model'], 'messages': messages, 'tools': tools, 'max_tokens': 2000},
+                'model': config['model'], 'messages': messages, 'max_tokens': 2000, **({'tools': tools} if tools else {})},
                 headers={'Authorization': f"Bearer {config['api_key']}",
                          'HTTP-Referer': 'https://cinderwire.co', 'X-Title': 'TouchStream'})
         except httpx.HTTPError as e:
@@ -159,6 +203,9 @@ class Assistant:
                     + (', with its recordings' if args.get('delete_recordings') else '') + '?')
         if name == 'publish_video':
             return f'Publish the edited video of {title or "this broadcast"} to YouTube ({args.get("privacy", "public")})?'
+        if name == 'publish_short':
+            short = _mcp().hub_app.hub.shorts.short(int(args.get('short_id') or 0))
+            return f'Publish the short "{args.get("title") or (short or {}).get("title", "")}" to YouTube ({args.get("privacy", "public")})?'
         if name == 'go_live':
             return f'Go live now with {title or "spoke " + str(args.get("spoke_id", ""))}?'
         if name == 'end_live':

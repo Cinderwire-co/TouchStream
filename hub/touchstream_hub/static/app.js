@@ -73,14 +73,15 @@ function SpokesPage() {
 
 function Shell({ onSignOut, ai }) {
   const hash = useHash();
-  const [, section, id] = hash.split('/');
+  const [, section, id, sub] = hash.split('/');
   const page = section || 'home';
-  const active = ['edit', 'transcript'].includes(page) ? 'schedule' : page;
+  const active = ['edit', 'transcript', 'shorts'].includes(page) ? 'schedule' : page;
   const link = (name, href, label) => html`<a href=${href} class=${active === name ? 'active' : ''}>${label}</a>`;
   const content = page === 'spokes' && id ? html`<${SpokePage} id=${id} />`
     : page === 'schedule' ? html`<${SchedulePage} />`
-    : page === 'edit' && id ? html`<${EditorPage} eventId=${id} />`
+    : page === 'edit' && id ? html`<${EditorPage} eventId=${id} tab=${sub} />`
     : page === 'transcript' && id ? html`<${TranscriptPage} eventId=${id} />`
+    : page === 'shorts' && id ? html`<${EditorPage} eventId=${id} tab="shorts" />`
     : page === 'settings' ? html`<${SettingsPage} />`
     : page === 'spokes' ? html`<${SpokesPage} />`
     : html`<${HomePage} />`;

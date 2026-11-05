@@ -184,3 +184,30 @@ class StereoMeter(Widget):
             self._bars[i].pos = (x, self.y)
             self._bars[i].size = (bar_w, self.height * level)
             self._colors[i].rgba = theme.BAD if level > 0.95 else theme.EMBER if level > 0.8 else theme.OK
+
+
+class RecordButton(ButtonBehavior, Widget):
+    """The round Record button: a red dot to start, a red square while recording."""
+    recording = BooleanProperty(False)
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault('size_hint', (None, None))
+        kwargs.setdefault('size', (52, 52))
+        super().__init__(**kwargs)
+        self.bind(pos=self._draw, size=self._draw, state=self._draw, recording=self._draw)
+        self._draw()
+
+    def _draw(self, *_):
+        self.canvas.clear()
+        cx, cy = self.center
+        r = min(self.width, self.height) / 2 - 3
+        with self.canvas:
+            Color(0, 0, 0, 0.55 if self.state == 'normal' else 0.8)
+            Ellipse(pos=(cx - r, cy - r), size=(2 * r, 2 * r))
+            Color(*theme.ASH[:3], 0.9)
+            Line(circle=(cx, cy, r), width=1.6)
+            Color(*theme.REC)
+            if self.recording:
+                RoundedRectangle(pos=(cx - 9, cy - 9), size=(18, 18), radius=[4])
+            else:
+                Ellipse(pos=(cx - 12, cy - 12), size=(24, 24))

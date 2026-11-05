@@ -36,13 +36,17 @@ It has two parts:
   itself.
 - **Records everything twice.** The hub records as the video arrives, and the spoke records its own copy and uploads
   it afterwards. Each broadcast gets a folder named for it, with the video, thumbnail, captions and details.
-- **Edits afterwards.** Trim, cut out sections, add fades, then publish to YouTube as a new video and make the live
-  one private.
+- **A real editor.** Video and audio tracks, cut and trim tools, gaps that stay until you close them, transitions,
+  titles, a color layer, music, and brands with an intro, an outro and a watermark. Publish to YouTube as a new
+  video and make the live one private.
 - **Transcripts and captions,** made on your own computer. Nothing leaves it.
+- **Shorts and reels.** Pick a moment by its sentences; TouchStream makes it vertical, follows the speaker, burns in
+  captions with the spoken word lit, and takes out the pauses. Publish it as a YouTube Short.
 - **An assistant on every page.** "Schedule our Sunday service every week at 10." "Cut the first ten minutes off
   Sunday's video." It asks before anything it can't undo. Bring your own OpenRouter key, or skip it.
 - **Works with AI agents.** An MCP server and a documented API let Claude, n8n or your own scripts run the hub.
-- **Phone downloads.** Scan a QR code on the spoke's screen to save a recording straight to your phone.
+- **Record without a hub.** Tap Record on the spoke's touchscreen. Scan its QR code to watch, trim and download the
+  recording on your phone.
 
 <table>
   <tr>
