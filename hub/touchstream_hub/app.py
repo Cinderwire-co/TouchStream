@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
-from . import VERSION, auth, desktop, discovery, platforms, recordings, settings
+from . import VERSION, agent_guide, auth, desktop, discovery, platforms, recordings, settings
 from .assistant import Assistant, AssistantError
 from .broadcasts import THUMBNAIL_MAX, THUMBNAIL_TYPES, Broadcasts
 from .db import Database
@@ -50,6 +50,7 @@ class Hub:
     db: Database
     sessions: auth.Sessions
     tokens: auth.Tokens
+    access: auth.AccessRequests
     mtx: MediaMTX
     restreamer: Restreamer
     youtube: YouTube
@@ -82,6 +83,7 @@ async def lifespan(app):
             hub.db.set_setting('admin_password', auth.hash_password(settings.ADMIN_PASSWORD))
     hub.sessions = auth.Sessions(hub.db)
     hub.tokens = auth.Tokens(hub.db)
+    hub.access = auth.AccessRequests(hub.db, hub.tokens)
     hub.mtx = MediaMTX()
     hub.mtx.start()
     hub.youtube = YouTube(hub.db)
@@ -121,7 +123,8 @@ app = FastAPI(title='TouchStream Hub', version=VERSION, lifespan=lifespan, docs_
 
 # ---- The API description (/api/openapi.json), for scripts and AI agents ----
 API_ABOUT = """Everything the TouchStream dashboard does, for scripts and AI agents. Send an API token from
-Settings > API access as `Authorization: Bearer ts_...`. A 'read' token can GET; 'control' can also schedule,
+Settings > API access as `Authorization: Bearer ts_...`; an agent can ask for one instead (`POST /api/access`, then
+someone approves it in the dashboard: see /agent). A 'read' token can GET; 'control' can also schedule,
 go live, edit and publish; 'admin' can also change settings.
 
 How things ripple:
@@ -136,13 +139,14 @@ How things ripple:
 - A broadcast can have any number of shorts: vertical videos of one moment, up to 3 minutes, published to
   YouTube as Shorts.
 - Spokes keep a week of their schedule and stream straight to YouTube if the hub is down."""
-HIDDEN = re.compile(r'^/$|^/hls/|^/api/(spoke/|internal/|setup|login|logout|tokens|password|reveal|recordings-folder'
+HIDDEN = re.compile(r'^/$|^/hls/|^/api/(spoke/|internal/|setup|login|logout|tokens|access-requests|password|reveal|recordings-folder'
                     r'|recordings/filmstrip|recordings/waveform|youtube/connect|assistant|shorts/style|titles/preview'
                     r'|events/[^/]+/editor/status|events/[^/]+/framing|events/[^/]+/caption-pages|shorts/caption)')
 TAGS = [(r'^/api/events/[^/]+/(editor|edit|edits)|^/api/edits|^/api/(media|brands)', 'Editing'), (r'^/api/events/[^/]+/transcript', 'Transcripts'),
         (r'^/api/events/[^/]+/shorts|^/api/shorts', 'Shorts'),
         (r'^/api/(events|series)', 'Broadcasts'), (r'^/api/(spokes|spoke-defaults|discovered|pairing|destinations)', 'Spokes'),
-        (r'^/api/(recordings|retention)', 'Recordings'), (r'^/api/youtube', 'YouTube'), (r'.', 'Hub')]
+        (r'^/api/(recordings|retention)', 'Recordings'), (r'^/api/youtube', 'YouTube'), (r'^/api/access', 'Getting access'),
+        (r'.', 'Hub')]
 
 
 def describe_api():
@@ -152,7 +156,7 @@ def describe_api():
         for path, ops in schema['paths'].items():
             tag = next(name for pattern, name in TAGS if re.match(pattern, path))
             for op in ops.values():
-                op['tags'], op['security'] = [tag], [{'token': []}]
+                op['tags'], op['security'] = [tag], [] if tag == 'Getting access' else [{'token': []}]
         schema.setdefault('components', {})['securitySchemes'] = {
             'token': {'type': 'http', 'scheme': 'bearer', 'description': 'An API token from Settings > API access'}}
         app.openapi_schema = schema
@@ -205,7 +209,8 @@ def admin(request: Request):
     bearer = request.headers.get('Authorization', '').removeprefix('Bearer ').strip()
     row = hub.tokens.check(bearer) if bearer else None
     if not row:
-        raise HTTPException(401, 'Sign in required, or send an API token as "Authorization: Bearer ts_..."')
+        raise HTTPException(401, 'Sign in required, or send an API token as "Authorization: Bearer ts_..." '
+                                 '(an agent can ask for one: see /agent)')
     need = 'read' if request.method in ('GET', 'HEAD') else 'admin' if ADMIN_ONLY.match(request.url.path) else 'control'
     if auth.SCOPES.index(row['scope']) < auth.SCOPES.index(need):
         raise HTTPException(403, f"This API token is for {row['scope']} only; this needs {need}")
@@ -1626,6 +1631,82 @@ def create_token(data: dict = Body()):
 @app.delete('/api/tokens/{token_id}', dependencies=[Depends(session_only)])
 def revoke_token(token_id: int):
     hub.tokens.revoke(token_id)
+    return {'ok': True}
+
+
+# ---- Agents asking for a token (auth.AccessRequests): see /agent ----
+@app.get('/agent', include_in_schema=False)
+@app.get('/llms.txt', include_in_schema=False)
+def agent_page(request: Request):
+    """What an AI agent reads first: what the hub does, how to ask for a token, and how to use it."""
+    return Response(agent_guide.guide(str(request.base_url)), media_type='text/markdown; charset=utf-8')
+
+
+def access_reply(row, base):
+    reply = {'id': row['id'], 'status': row['status'], 'name': row['name'], 'scope': row['scope'],
+             'code': row['code'], 'expires_at': row['expires_at']}
+    if row['status'] == 'pending':
+        reply['tell_your_person'] = (f'Approve TouchStream access for "{row["name"]}" in the dashboard ({base}). '
+                                     f'Its code is {row["code"]}.')
+        reply['poll'] = f'{base}/api/access/{row["id"]}?wait=25'
+    return reply
+
+
+@app.post('/api/access')
+def ask_for_access(request: Request, data: dict = Body()):
+    """Ask for an API token, with none (an AI agent, say). Someone approves it in the dashboard, where it shows
+    with the same `code` as here, and then `GET /api/access/{id}` has the token, once. See /agent."""
+    name = str(data.get('name') or '').strip()[:60] or 'An AI agent'
+    scope = data.get('scope') or 'control'
+    if scope not in auth.SCOPES:
+        raise HTTPException(400, f'scope is one of {", ".join(auth.SCOPES)}')
+    try:
+        row = hub.access.ask(name, scope, request.client.host if request.client else None)
+    except auth.TooManyRequests:
+        raise HTTPException(429, 'Too many requests are waiting: approve or deny them in the dashboard first')
+    return access_reply(row, str(request.base_url).rstrip('/'))
+
+
+@app.get('/api/access/{request_id}')
+async def access_status(request: Request, request_id: str, wait: int = 0):
+    """How a request is going: pending, approved (with the token, this once), collected, denied or expired.
+    `wait` (up to 30 seconds) waits for it to change first."""
+    base = str(request.base_url).rstrip('/')
+    deadline = time.time() + max(0, min(wait, 30))
+    while True:
+        row = await asyncio.to_thread(hub.access.get, request_id)
+        if not row:
+            raise HTTPException(404, 'No such request: ask again')
+        if row['status'] == 'approved':
+            token = await asyncio.to_thread(hub.access.collect, request_id)
+            if token:
+                return {**access_reply(row, base), 'token': token, 'header': f'Authorization: Bearer {token}',
+                        'mcp': f'{base}/mcp', 'openapi': f'{base}/api/openapi.json', 'guide': f'{base}/agent'}
+            row = await asyncio.to_thread(hub.access.get, request_id)
+        if row['status'] != 'pending' or time.time() >= deadline:
+            return access_reply(row, base)
+        await asyncio.sleep(1)
+        await asyncio.to_thread(hub.access.expire)
+
+
+@app.get('/api/access-requests', dependencies=[Depends(session_only)])
+def access_requests():
+    """The requests waiting for the dashboard to answer."""
+    return hub.access.waiting()
+
+
+@app.post('/api/access-requests/{request_id}/approve', dependencies=[Depends(session_only)])
+def approve_access(request_id: str, scope: str = Body(embed=True)):
+    if scope not in auth.SCOPES:
+        raise HTTPException(400, f'scope is one of {", ".join(auth.SCOPES)}')
+    if not hub.access.approve(request_id, scope):
+        raise HTTPException(409, 'That request was answered already, or it lapsed')
+    return {'ok': True}
+
+
+@app.post('/api/access-requests/{request_id}/deny', dependencies=[Depends(session_only)])
+def deny_access(request_id: str):
+    hub.access.deny(request_id)
     return {'ok': True}
 
 

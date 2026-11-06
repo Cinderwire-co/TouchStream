@@ -1,7 +1,7 @@
 // Settings page
 import { html, useState, useEffect } from '../vendor/preact-htm.module.js';
-import { ago, api, bytes, reveal, revealLabel, CINDERWIRE } from './lib.js';
-import { Avatar, Switch } from './ui.js';
+import { ago, api, bytes, reveal, revealLabel, usePoll, CINDERWIRE } from './lib.js';
+import { Avatar, Modal, Switch } from './ui.js';
 import { Select } from './fields.js';
 import { confirmAction, toast } from './dialogs.js';
 import { AssistantSettings } from './assistant.js';
@@ -180,11 +180,18 @@ function ApiAccess() {
   const [made, setMade] = useState(null);
   const [copied, setCopied] = useState(false);
   const [hub, setHub] = useState(null);
-  useEffect(() => { api('GET', '/api/tokens').then(setTokens); api('GET', '/api/hub').then(setHub).catch(() => {}); }, []);
+  useEffect(() => {
+    const load = () => api('GET', '/api/tokens').then(setTokens);
+    load();
+    api('GET', '/api/hub').then(setHub).catch(() => {});
+    addEventListener('ts-tokens', load);   // an agent's request approved (AccessPrompt)
+    return () => removeEventListener('ts-tokens', load);
+  }, []);
   if (!tokens) return null;
   // On the hub's own computer the page is at localhost; agents elsewhere need its network address
   const here = ['localhost', '127.0.0.1'].includes(location.hostname) && hub && hub.ip;
-  const mcpUrl = here ? `http://${hub.ip}:${hub.port}/mcp` : `${location.origin}/mcp`;
+  const origin = here ? `http://${hub.ip}:${hub.port}` : location.origin;
+  const mcpUrl = `${origin}/mcp`;
   const create = async (e) => {
     e.preventDefault();
     try {
@@ -205,6 +212,8 @@ function ApiAccess() {
     <p class="muted">Let scripts and AI agents use this hub: schedule, go live, edit, publish. Give each one its own
       token, with only the access it needs. Agents that speak MCP connect to <b class="mono">${mcpUrl}</b>;
       anything else can use the API described at <a href="/api/openapi.json" target="_blank" rel="noopener">/api/openapi.json</a>.</p>
+    <p class="muted">An AI agent can ask for its own token: tell it to read <b class="mono">${origin}/agent</b>. Its
+      request shows up here to approve, with a code to check, and it gets the token itself.</p>
     ${made && html`<div class="new-token">
       <b>Copy this token now: it isn't shown again.</b>
       <div class="copy"><code>${made}</code><button class="btn small" onClick=${copy}>${copied ? 'Copied' : 'Copy'}</button></div>
@@ -223,6 +232,42 @@ function ApiAccess() {
       <div><button class="btn" disabled=${!form.name.trim()}>Make token</button></div>
     </form>
   </div>`;
+}
+
+/** An agent asking for a token (POST /api/access), on whatever page is open. Approved, it collects the token
+ * itself; closed, it waits (for ten minutes) until the next visit. */
+export function AccessPrompt() {
+  const [waiting, setWaiting] = useState([]);
+  const [later, setLater] = useState([]);
+  const [scope, setScope] = useState(null);
+  usePoll(() => api('GET', '/api/access-requests').then(setWaiting), 3000);
+  const r = waiting.find((x) => !later.includes(x.id));
+  useEffect(() => { setScope(r ? r.scope : null); }, [r && r.id]);
+  if (!r || !scope) return null;
+  const answer = async (approve) => {
+    try {
+      await api('POST', `/api/access-requests/${r.id}/${approve ? 'approve' : 'deny'}`, approve ? { scope } : undefined);
+      toast(approve ? `${r.name} can use the hub now` : `${r.name} was turned away`, 'ok');
+      if (approve) dispatchEvent(new Event('ts-tokens'));
+    } catch (err) { toast(err); }
+    setWaiting(waiting.filter((x) => x.id !== r.id));
+  };
+  const about = Object.fromEntries(SCOPES.map(([v, l, what]) => [v, { l, what }]));
+  return html`<${Modal} title="An AI agent is asking for access" onClose=${() => setLater([...later, r.id])}>
+    <p><b>${r.name}</b> is asking to use this hub${['127.0.0.1', '::1'].includes(r.ip) ? ' from this computer'
+      : r.ip ? html` from <span class="mono">${r.ip}</span>` : ''}.
+      Approve it only if it's showing you this same code:</p>
+    <div class="code">${r.code}</div>
+    <div class="field access-scope"><span>Access</span>
+      <div class="segmented wide" role="group" aria-label="Access">${SCOPES.map(([v, l]) => html`<button type="button"
+        class=${scope === v ? 'on' : ''} onClick=${() => setScope(v)}>${l}</button>`)}</div>
+      <span class="muted small">${about[scope].what}${scope !== r.scope ? ` (it asked for ${about[r.scope].l.toLowerCase()})` : ''}.
+        Revoke it any time, in Settings.</span></div>
+    <div class="modal-foot split">
+      <button class="btn ghost" onClick=${() => answer(false)}>Deny</button>
+      <button class="btn primary" onClick=${() => answer(true)}>Approve</button>
+    </div>
+  </${Modal}>`;
 }
 
 export function SettingsPage() {

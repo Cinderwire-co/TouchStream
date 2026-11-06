@@ -3,7 +3,18 @@
 Everything the dashboard does, scripts and AI agents can do too: look at the spokes and the schedule, schedule
 broadcasts (once or repeating), go live, read transcripts, edit the video and publish it.
 
-## 1. Make a token
+## 1. Let the agent ask (the easy way)
+
+Tell the agent to read `http://<hub address>/agent`. That page says what the hub does and how to ask for a token.
+The agent asks, and the request shows up in the dashboard, on whatever page is open: its name, where it's asking
+from, and a code. The agent shows you the same code, so you know the request is the one you're talking to. Approve
+it, with less access than it asked for if you like, and the agent collects the token itself: there's nothing to
+copy. A request nobody answers lapses after ten minutes, and so does a token nobody collects.
+
+The page is written as a skill (`SKILL.md`), so an agent such as Claude Code can keep it and know the hub next time.
+It never holds a token. For an agent that can't make web requests of its own, make a token by hand instead.
+
+## 2. Or make a token
 
 In the dashboard, open **Settings > API access** and make a token for each thing that will use the hub, with only
 the access it needs:
@@ -17,7 +28,7 @@ the access it needs:
 The token is shown once, so copy it then. Revoke it there any time. Tokens can never make other tokens or change the
 hub's password.
 
-## 2. Connect an AI agent (MCP)
+## 3. Connect an AI agent (MCP)
 
 The hub is an MCP server at `http://<hub address>/mcp`. MCP is the standard way AI agents use tools, and it works
 with Claude, ChatGPT, n8n, local models and others. Send the token as a header:
@@ -57,7 +68,7 @@ Sunday's video and publish it", or "make a short of where he talks about walls a
 Agents on another network need to reach the hub. A hub on Coolify has an HTTPS address already; for one at home,
 use something like [Tailscale](https://tailscale.com).
 
-## 3. Or call the API directly
+## 4. Or call the API directly
 
 The API is described at `http://<hub address>/api/openapi.json` (OpenAPI 3), with each route and what changing it
 does. For example:

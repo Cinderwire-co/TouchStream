@@ -12,6 +12,9 @@ TouchStream becomes a system: spokes plus a hub that schedules, streams, records
   of every broadcast uploaded as it's made, Go live, End and Record on its screen, and its recordings to a phone by QR
   code. 1080p at 24, 25, 30, 50 or 60 fps; the hub offers each spoke only the rates it can capture. (The Raspberry Pi
   spoke is retired; it's in the history at commit a12f6b2.)
+- **AI agents ask for their own access**: point one at the hub's `/agent` page, which says what the hub does and
+  how to ask; approve the request in the dashboard (with a code to check) and the agent collects its token, with no
+  copying. The page doubles as a skill the agent can keep.
 - **The TouchStream installer** for Mac and Windows: it installs the hub (or finds it, or one on another computer),
   checks you have a Luckfox PicoKVM, then writes a microSD card for each spoke, paired with the hub so the box shows
   up in the dashboard by itself. It only offers removable cards (never this computer's own disks), shows what's on

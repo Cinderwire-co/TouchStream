@@ -7,7 +7,7 @@ import { Assistant, AssistantSetup } from './js/assistant.js';
 import { HomePage } from './js/home.js';
 import { AddSpokeModal, AllSpokesModal, HubAddressButton, SpokeCard, SpokePage } from './js/spokes.js';
 import { SchedulePage } from './js/schedule.js';
-import { SettingsPage } from './js/pages.js';
+import { AccessPrompt, SettingsPage } from './js/pages.js';
 import { EditorPage } from './js/editor.js';
 import { TranscriptPage } from './js/transcript.js';
 
@@ -96,6 +96,7 @@ function Shell({ onSignOut, ai }) {
     </header>
     <main key=${page}>${content}</main>
     ${ai && ai.enabled && html`<${Assistant} />`}
+    <${AccessPrompt} />
   </div>`;
 }
 

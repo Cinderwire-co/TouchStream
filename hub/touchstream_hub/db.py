@@ -172,6 +172,18 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     created_at REAL NOT NULL,
     last_used_at REAL
 );
+-- Agents asking for an API token, for the dashboard to approve (auth.AccessRequests)
+CREATE TABLE IF NOT EXISTS access_requests (
+    id TEXT PRIMARY KEY,                        -- long and random: the agent's proof it asked
+    name TEXT NOT NULL,
+    scope TEXT NOT NULL,                        -- asked for, then what was approved
+    code TEXT NOT NULL,                         -- shown by the agent and the dashboard, to match
+    ip TEXT,
+    status TEXT NOT NULL,                       -- pending | approved | collected | denied | expired
+    token_id INTEGER,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS event_targets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
