@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+# TouchStream's dev environment, all on this computer: the hub from this checkout, a stand-in
+# for YouTube, and two emulated spokes (one paired with the hub, one with no hub).
+#
+#   tools/dev up              set up whatever's missing, then start everything
+#   tools/dev down            stop everything
+#   tools/dev status          what's running, and where
+#   tools/dev restart [hub]   restart the hub on the code as it is now (or everything)
+#   tools/dev logs [hub|youtube|spoke|hubless]
+#   tools/dev reset           stop everything and delete .dev/ (the dev hub's data and recordings)
+#
+# It all lives in .dev/ (git-ignored). The dev hub has ports of its own, so it runs beside a hub
+# installed on this computer: its dashboard is on 8091, SRT on 8891 and RTMP on 1936. The paired
+# spoke gets its settings as the installer gives them: on a "card" with the settings block.
+# The stand-in YouTube takes any client ID ending in .apps.googleusercontent.com.
+# Needs uv, Go, Docker Desktop and FFmpeg (on a Mac: brew install uv go ffmpeg).
+#
+# Copyright (c) 2025 Will Reeves and TouchStream Contributors
+# Licensed under the MIT License - see LICENSE file for details
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEV="$ROOT/.dev"
+SPOKE_DEV="$ROOT/spoke/tools/dev"
+PORT=8091
+HUB="http://localhost:$PORT"
+YOUTUBE_PORT=18765
+SPOKE_NAME=Auditorium
+EMULATOR=touchstream-spoke-emulator
+# The dev hub's own ports, clear of an installed hub's
+export TOUCHSTREAM_PORT=$PORT TOUCHSTREAM_SRT_PORT=8891 TOUCHSTREAM_RTMP_PORT=1936 \
+    TOUCHSTREAM_MTX_API_PORT=9998 TOUCHSTREAM_MTX_RTSP_PORT=8555 TOUCHSTREAM_MTX_HLS_PORT=8887
+
+say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
+die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
+running() { local pid; pid="$(cat "$DEV/$1.pid" 2>/dev/null)" && kill -0 "$pid" 2>/dev/null; }
+password() { cat "$DEV/password"; }
+
+need() {
+    local missing=()
+    for tool in uv go ffmpeg docker curl; do command -v "$tool" >/dev/null || missing+=("$tool"); done
+    [ ${#missing[@]} -eq 0 ] || die "Install ${missing[*]} first (on a Mac: brew install ${missing[*]})"
+    docker info >/dev/null 2>&1 || die "Start Docker Desktop first"
+}
+
+# A port something else already has: say what, rather than fail later in a log
+free() {
+    local port=$1 proto=${2:-TCP} who
+    if [ "$proto" = UDP ]; then # bound here: not a socket sending to it (Docker keeps those a while)
+        who="$(lsof -nP -iUDP:"$port" 2>/dev/null | awk -v p=":$port" 'NR>1 && $9 !~ /->/ && substr($9, length($9)-length(p)+1) == p {print $1" (pid "$2")"; exit}' || true)"
+    else who="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1" (pid "$2")"}' || true)"; fi
+    [ -z "$who" ] || die "Port $port is in use by $who"
+}
+
+# ---- Setting up (once, or when something's out of date) ----
+setup() {
+    mkdir -p "$DEV/logs" "$DEV/bin" "$DEV/cards"
+    if [ ! -x "$DEV/venv/bin/touchstream-hub" ] || [ "$ROOT/hub/pyproject.toml" -nt "$DEV/venv/.installed" ]; then
+        say "Installing the hub's Python packages (from hub/, editable: code changes need only a restart)"
+        [ -d "$DEV/venv" ] || uv venv --quiet --python 3.12 "$DEV/venv"
+        uv pip install --quiet --python "$DEV/venv/bin/python" -e "$ROOT/hub[transcribe]"
+        touch "$DEV/venv/.installed"
+    fi
+    # MediaMTX: the version the hub's installer uses
+    local version mtx="$DEV/bin/mediamtx"
+    version="$(sed -n 's/^MEDIAMTX_VERSION=//p' "$ROOT/hub/install/macos.sh")"
+    if ! "$mtx" --version 2>/dev/null | grep -qx "v$version"; then
+        say "Downloading MediaMTX $version"
+        local os arch file tmp base="https://github.com/bluenviron/mediamtx/releases/download/v$version"
+        os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+        case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; x86_64) arch=amd64 ;; *) die "No MediaMTX for $(uname -m)" ;; esac
+        file="mediamtx_v${version}_${os}_$arch.tar.gz"
+        tmp="$(mktemp -d)"
+        (cd "$tmp" && curl -fsSLO "$base/$file" \
+            && curl -fsSL "$base/checksums.sha256" | grep " \*$file\$" | shasum -a 256 -c - >/dev/null \
+            && tar -xzf "$file" mediamtx) || { rm -rf "$tmp"; die "Couldn't download MediaMTX"; }
+        mv "$tmp/mediamtx" "$mtx"
+        rm -rf "$tmp"
+    fi
+    [ -f "$DEV/password" ] || { "$DEV/venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(9))' > "$DEV/password"; chmod 600 "$DEV/password"; }
+}
+
+# ---- The hub and the stand-in YouTube ----
+start_youtube() {
+    running youtube && return
+    free $YOUTUBE_PORT
+    nohup "$DEV/venv/bin/python" "$ROOT/hub/tests/fake_youtube.py" $YOUTUBE_PORT >"$DEV/logs/youtube.log" 2>&1 &
+    echo $! >"$DEV/youtube.pid"
+}
+
+start_hub() {
+    running hub && return
+    free $PORT; free "$TOUCHSTREAM_SRT_PORT" UDP; free "$TOUCHSTREAM_RTMP_PORT"
+    free "$TOUCHSTREAM_MTX_API_PORT"; free "$TOUCHSTREAM_MTX_RTSP_PORT"; free "$TOUCHSTREAM_MTX_HLS_PORT"
+    say "Starting the hub"
+    TOUCHSTREAM_DATA="$DEV/hub" TOUCHSTREAM_RECORDINGS="$DEV/recordings" TOUCHSTREAM_MEDIAMTX="$DEV/bin/mediamtx" \
+        TOUCHSTREAM_KEEP_AWAKE=0 TOUCHSTREAM_GOOGLE_OAUTH_BASE="http://127.0.0.1:$YOUTUBE_PORT" \
+        TOUCHSTREAM_YOUTUBE_API_BASE="http://127.0.0.1:$YOUTUBE_PORT" \
+        nohup "$DEV/venv/bin/touchstream-hub" >>"$DEV/logs/hub.log" 2>&1 &
+    echo $! >"$DEV/hub.pid"
+    for _ in $(seq 1 60); do
+        curl -fsS -m 1 "$HUB/api/state" >/dev/null 2>&1 && return
+        running hub || break
+        sleep 0.5
+    done
+    tail -15 "$DEV/logs/hub.log" >&2
+    die "The hub didn't start (its log: tools/dev logs hub)"
+}
+
+stop() { # stop NAME: the process in .dev/NAME.pid
+    local pid
+    pid="$(cat "$DEV/$1.pid" 2>/dev/null)" || return 0
+    if kill "$pid" 2>/dev/null; then
+        for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
+        kill -9 "$pid" 2>/dev/null || true
+    fi
+    rm -f "$DEV/$1.pid"
+}
+
+stop_hub() {
+    stop hub
+    pkill -f "$DEV/bin/mediamtx" 2>/dev/null || true   # the hub stops it, unless the hub was killed
+}
+
+# Signs in (choosing the password on a new hub), for the calls below
+sign_in() {
+    local jar="$DEV/cookies" body
+    body="{\"password\":\"$(password)\"}"
+    if curl -fsS "$HUB/api/state" | grep -q '"setup_needed": *true'; then
+        curl -fsS -c "$jar" -H 'content-type: application/json' -d "$body" "$HUB/api/setup" >/dev/null
+    fi
+    curl -fsS -c "$jar" -H 'content-type: application/json' -d "$body" "$HUB/api/login" >/dev/null \
+        || die "Can't sign in to the dev hub with the password in .dev/password"
+}
+
+# ---- The spokes ----
+# The paired spoke's card: registered with the hub as the installer does it, with its settings
+# block as the installer writes it (installer/internal/image), but reaching the hub at
+# host.docker.internal, which keeps working when this computer's address changes
+make_card() {
+    local card="$DEV/cards/$SPOKE_NAME.img" reply
+    [ -f "$card" ] && return
+    sign_in
+    say "Registering $SPOKE_NAME with the hub"
+    reply="$(curl -fsS -b "$DEV/cookies" -H 'content-type: application/json' -d "{\"name\":\"$SPOKE_NAME\"}" "$HUB/api/spokes")"
+    "$DEV/venv/bin/python" -I - "$card" "$PORT" "$SPOKE_NAME" "$reply" <<'EOF'
+import json, os, sys
+path, port, name, reply = sys.argv[1], sys.argv[2], sys.argv[3], json.loads(sys.argv[4])
+settings = {'hub_url': f'http://host.docker.internal:{port}', 'spoke_id': reply['spoke_id'],
+            'token': reply['token'], 'name': name}
+block = b'TOUCHSTREAM-PROVISION-V1\n' + json.dumps(settings).encode() + b'\n'
+with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'wb') as f:
+    f.write(block.ljust(64 << 10, b'\0'))
+EOF
+}
+
+start_spokes() {
+    say "Starting the spokes"
+    DATA="$DEV/spokes/$SPOKE_NAME" CARD="$DEV/cards/$SPOKE_NAME.img" "$SPOKE_DEV" emulate >/dev/null
+    DATA="$DEV/spokes/hubless" "$SPOKE_DEV" hubless >/dev/null
+}
+
+container() { docker ps --filter "name=^$1\$" --format '{{.Status}}' 2>/dev/null; }
+
+status() {
+    local up
+    if running hub; then echo "Hub          $HUB   password: $(password)"; else echo "Hub          stopped"; fi
+    if running youtube; then echo "YouTube      stand-in on :$YOUTUBE_PORT (calls: http://127.0.0.1:$YOUTUBE_PORT/calls)"; else echo "YouTube      stopped"; fi
+    if [ -n "$(container $EMULATOR)" ]; then echo "Spoke        http://localhost:6077/screen   $SPOKE_NAME, paired with the hub"
+    else echo "Spoke        stopped"; fi
+    if [ -n "$(container $EMULATOR-hubless)" ]; then echo "Hubless      http://localhost:6078/screen   no hub: tap the gray dot for setup"
+    else echo "Hubless      stopped"; fi
+}
+
+case "${1:-}" in
+    up)
+        need
+        setup
+        start_youtube
+        start_hub
+        make_card
+        start_spokes
+        echo
+        status
+        ;;
+    down)
+        stop_hub
+        stop youtube
+        "$SPOKE_DEV" stop >/dev/null
+        echo "Stopped"
+        ;;
+    status) status ;;
+    restart)
+        if [ "${2:-}" = hub ]; then stop_hub; start_hub; status
+        else "$0" down; "$0" up; fi
+        ;;
+    logs)
+        which="${2:-hub}"
+        case "$which" in
+            hub|youtube) tail -n 50 -f "$DEV/logs/$which.log" ;;
+            spoke) docker logs -f $EMULATOR ;;
+            hubless) docker logs -f $EMULATOR-hubless ;;
+            *) die "logs: hub, youtube, spoke or hubless" ;;
+        esac
+        ;;
+    reset)
+        if [ -t 0 ]; then
+            read -r -p "Delete .dev/: the dev hub's data, recordings and the spokes' settings? [y/N] " yes
+            [ "$yes" = y ] || [ "$yes" = Y ] || exit 0
+        fi
+        "$0" down
+        rm -rf "$DEV"
+        echo "Deleted .dev/: tools/dev up starts afresh"
+        ;;
+    *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

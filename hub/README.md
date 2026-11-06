@@ -7,5 +7,6 @@ the dashboard. It's a small web app (FastAPI, with a Preact dashboard and no bui
 Install it on a Mac, Windows or Linux computer with one command, or run it with Docker or Coolify on a server:
 see [docs/hub.md](../docs/hub.md).
 
-For development: `uv run touchstream-hub --port 8091` from this folder. Run `tests/check.sh` before committing:
-it runs the unit tests and checks that every dashboard module parses.
+For development: `tools/dev up` from the top folder runs the hub from this checkout (on ports of its own, so it
+runs beside an installed hub), a stand-in YouTube and two emulated spokes; `tools/dev restart hub` picks up a change.
+Run `tests/check.sh` before committing: it runs the unit tests and checks that every dashboard module parses.

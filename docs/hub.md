@@ -123,6 +123,7 @@ Linux, use `systemctl --user edit touchstream-hub`. In Docker, put them in the c
 | `TOUCHSTREAM_RECORDINGS` | The recordings folder (also in Settings) |
 | `TOUCHSTREAM_DATA` | Where the database and working files live |
 | `TOUCHSTREAM_SRT_PORT`, `TOUCHSTREAM_RTMP_PORT` | Video ports (8890, 1935) |
+| `TOUCHSTREAM_MTX_API_PORT`, `TOUCHSTREAM_MTX_RTSP_PORT`, `TOUCHSTREAM_MTX_HLS_PORT` | MediaMTX's own ports, on this computer only (9997, 8554, 8888): change them and the ones above to run a second hub on the same computer |
 | `TOUCHSTREAM_DISCOVERY` | `0` stops looking for spokes on the network |
 | `TOUCHSTREAM_KEEP_AWAKE` | `0` lets the computer sleep while the hub runs |
 | `TOUCHSTREAM_GOOGLE_CLIENT_ID`, `TOUCHSTREAM_GOOGLE_CLIENT_SECRET` | The YouTube OAuth client, instead of Settings |

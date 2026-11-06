@@ -39,7 +39,8 @@ tools/dev stop
 ```
 
 `tools/dev hubless` runs a second emulator beside it with no hub, on port 6078, to try setup and going live
-straight to YouTube.
+straight to YouTube. The repo's own `tools/dev up` (in the top folder) starts both with a dev hub, the first one
+already paired with it.
 
 Its screen is at **http://localhost:6077/screen**, or at your computer's address from a phone on
 the same network. Tap it as you would the box: Record, and the middle of the home screen for the

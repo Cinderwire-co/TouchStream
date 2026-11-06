@@ -93,6 +93,18 @@ records every broadcast for you to download, edit and upload yourself.
 | [**AI agents and the API**](docs/api.md) | Letting Claude, n8n or a script run your hub |
 | [**Roadmap**](docs/ROADMAP.md) | What's being built next |
 
+## Developing
+
+```bash
+tools/dev up        # the hub from this checkout, a stand-in YouTube, and two emulated spokes
+tools/dev status    # where they are, and the dev dashboard's password
+tools/dev down
+```
+
+It needs uv, Go, Docker Desktop and FFmpeg, and keeps everything in `.dev/`. The dev hub has ports of its own
+(its dashboard is http://localhost:8091), so it runs beside a hub installed on the same computer. See
+[hub/](hub/README.md), [spoke/](spoke/README.md) and [installer/](installer/README.md) for each part.
+
 ## License
 
 MIT: see [LICENSE](LICENSE). TouchStream and the TouchStream mark are made by [Cinderwire](https://cinderwire.co).

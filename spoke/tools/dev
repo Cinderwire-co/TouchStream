@@ -12,7 +12,10 @@
 #   tools/dev stop           stop the emulator
 #
 # The emulator keeps its settings and recordings in .emulator/ (git-ignored), like the card in
-# the real box. Needs Go and Docker Desktop. ADDRESS=... sets the address phones use for it.
+# the real box. Needs Go and Docker Desktop. ADDRESS=... sets the address phones use for it,
+# DATA=... another folder for its settings and recordings, and CARD=... a file with the
+# installer's settings block, which pairs it with a hub at its first start (the repo's tools/dev
+# does this).
 #
 # Copyright (c) 2025 Will Reeves and TouchStream Contributors
 # Licensed under the MIT License - see LICENSE file for details
@@ -53,6 +56,9 @@ case "${1:-}" in
         [ -f "$CLIP" ] || clip
         port=6077 data="$SPOKE/.emulator"
         if [ "$1" = hubless ]; then NAME=$NAME-hubless port=6078 data="$SPOKE/.emulator-hubless"; fi
+        data="${DATA:-$data}"
+        card=()   # the installer's settings, as on a card it wrote
+        if [ -n "${CARD:-}" ]; then card=(-v "$CARD:/opt/card.img:ro"); fi
         mkdir -p "$data"
         docker image inspect "$IMAGE" >/dev/null 2>&1 ||
             docker build -q --platform linux/arm/v7 -t "$IMAGE" "$SPOKE/tools/emulator" >/dev/null
@@ -62,9 +68,9 @@ case "${1:-}" in
         docker rm -f "$NAME" >/dev/null 2>&1 || true
         docker run -d --name "$NAME" --platform linux/arm/v7 --hostname picokvm-emulator \
             --cpus 1 --memory 256m --memory-swap 256m -p "$port:6077" -e TZ="${tz:-UTC}" \
-            -v "$SPOKE/build:/opt/touchstream:ro" -v "$CLIP:/opt/clip.ts:ro" -v "$data:/userdata" \
+            -v "$SPOKE/build:/opt/touchstream:ro" -v "$CLIP:/opt/clip.ts:ro" -v "$data:/userdata" ${card[@]+"${card[@]}"} \
             "$IMAGE" /opt/touchstream/touchstream-spoke run -data /userdata/touchstream -source replay:/opt/clip.ts \
-            -address "$address:$port" >/dev/null
+            -address "$address:$port" ${CARD:+-card /opt/card.img} >/dev/null
         echo "Emulator running. Its screen: http://localhost:$port/screen (from a phone: http://$address:$port/screen)"
         ;;
     pair) shift; run_in pair "$@" ;;

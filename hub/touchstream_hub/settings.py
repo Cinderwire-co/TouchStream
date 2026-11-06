@@ -5,6 +5,9 @@ TOUCHSTREAM_RECORDINGS      the recordings folder (also settable in the dashboar
 TOUCHSTREAM_PORT            web UI / API port (8080)
 TOUCHSTREAM_SRT_PORT        SRT ingest port spokes publish to (8890/udp)
 TOUCHSTREAM_RTMP_PORT       RTMP ingest port for other encoders, e.g. OBS (1935)
+TOUCHSTREAM_MTX_API_PORT    MediaMTX's API, RTSP and HLS ports, on loopback (9997, 8554, 8888): change
+TOUCHSTREAM_MTX_RTSP_PORT     them, and the three above, to run a second hub on the same computer
+TOUCHSTREAM_MTX_HLS_PORT
 TOUCHSTREAM_PUBLIC_HOST     host name spokes use for SRT (default: the host they reached the hub at)
 TOUCHSTREAM_ADMIN_PASSWORD  set the admin password instead of the first-run screen
 TOUCHSTREAM_DISCOVERY       0 to stop listening for spokes on the local network
@@ -71,9 +74,9 @@ FFPROBE_BIN = (os.environ.get('TOUCHSTREAM_FFPROBE') or (_beside if os.path.exis
                or shutil.which('ffprobe') or 'ffprobe')
 
 # MediaMTX's own ports; loopback only, the hub fronts everything
-MTX_API_PORT = 9997
-MTX_RTSP_PORT = 8554
-MTX_HLS_PORT = 8888
+MTX_API_PORT = int(os.environ.get('TOUCHSTREAM_MTX_API_PORT', 9997))
+MTX_RTSP_PORT = int(os.environ.get('TOUCHSTREAM_MTX_RTSP_PORT', 8554))
+MTX_HLS_PORT = int(os.environ.get('TOUCHSTREAM_MTX_HLS_PORT', 8888))
 
 # Spoke discovery beacons (UDP broadcast) and the spoke's local API
 BEACON_PORT = 9999
