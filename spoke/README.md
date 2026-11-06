@@ -11,10 +11,10 @@ adopts it. It's a single static Go binary, small enough for the box. See [docs/s
 | Its own recordings, uploaded to the hub | Working |
 | The screen: status, Recordings, Go live / End, Record | Working in the emulator |
 | Recordings on the screen, a QR code each, the phone page to watch, trim and save | Working in the emulator |
-| HDMI capture and the hardware encoder (1080p at up to 60 fps) | Waiting for the box |
+| HDMI capture and the hardware encoder (1080p at up to 60 fps) | Written (`capture/`), builds, loads on the box's libraries; the rest of the way in works in the emulator; waiting for the box |
 | HDMI sound | Waiting for the box (the driver plays it 1.29× fast) |
 | ffmpeg on the box, for the phone copies and trims | Waiting for the box |
-| The screen on the real panel and its touch | Waiting for the box |
+| The screen on the real panel and its touch | Written (`internal/panel`), works in the emulator with stand-ins; waiting for the box |
 | Straight to YouTube: with no hub (stream keys from the setup page), or when the hub is down | Working in the emulator |
 | The setup page (QR code on the screen): stream keys, resolution, frame rate, quality, name, hub | Working in the emulator |
 | Paired from its first start by the installer's settings on the card | Working in the emulator |

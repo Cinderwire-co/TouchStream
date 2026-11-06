@@ -3,7 +3,9 @@ image from theirs.
 
     python3 tools/picokvm_image.py layout IMAGE                  the partitions, and where they are
     python3 tools/picokvm_image.py extract IMAGE NAME OUT        one partition (system_a, say) into OUT
-    python3 tools/picokvm_image.py build IMAGE SPOKE OUT [--xz]  the spoke's image (SPOKE: its ARMv7 binary)
+    python3 tools/picokvm_image.py build IMAGE SPOKE OUT [--capture HELPER] [--xz]
+                                                                 the spoke's image (SPOKE: its ARMv7 binary;
+                                                                 HELPER: touchstream-capture, for HDMI)
 
 The image has no MBR or GPT: its partitions are in the U-Boot environment at its start (32 KiB, with
 a CRC), as blkdevparts=mmcblk1:32K(env),512K@32K(idblock),... The spoke's image is theirs with:
@@ -130,8 +132,9 @@ def debugfs(image, commands, writable=True):
         os.remove(script)
 
 
-def add_spoke(system, spoke, work):
-    """Put the spoke in a system partition (an ext4 image), started in place of Luckfox's apps."""
+def add_spoke(system, spoke, work, capture=None):
+    """Put the spoke (and its capture helper) in a system partition (an ext4 image), started in place
+    of Luckfox's apps."""
     lunch = os.path.join(work, 'RkLunch.sh')
     debugfs(system, ['dump /oem/usr/bin/RkLunch.sh {w}/RkLunch.sh'], writable=False)
     with open(lunch) as f:
@@ -146,12 +149,17 @@ def add_spoke(system, spoke, work):
     shutil.copy(spoke, os.path.join(work, 'touchstream-spoke'))
     commands = ['rm /oem/usr/bin/RkLunch.sh', 'write {w}/RkLunch.sh /oem/usr/bin/RkLunch.sh',
                 'write {w}/touchstream-spoke /usr/bin/touchstream-spoke', 'write {w}/touchstream-start /usr/bin/touchstream-start']
-    for dest in ('/oem/usr/bin/RkLunch.sh', '/usr/bin/touchstream-spoke', '/usr/bin/touchstream-start'):
+    files = ['/oem/usr/bin/RkLunch.sh', '/usr/bin/touchstream-spoke', '/usr/bin/touchstream-start']
+    if capture:
+        shutil.copy(capture, os.path.join(work, 'touchstream-capture'))
+        commands.append('write {w}/touchstream-capture /usr/bin/touchstream-capture')
+        files.append('/usr/bin/touchstream-capture')
+    for dest in files:
         commands += [f'set_inode_field {dest} mode 0100755', f'set_inode_field {dest} uid 0', f'set_inode_field {dest} gid 0']
     debugfs(system, commands)
 
 
-def build(source, spoke, out, compress=False):
+def build(source, spoke, out, compress=False, capture=None):
     with open(source, 'rb') as f:
         env = read_env(f)
     spec = variables(env)['blkdevparts']
@@ -173,7 +181,7 @@ def build(source, spoke, out, compress=False):
         system = os.path.join(work, 'system.img')
         extract(source, 'system_a', system)
         print('Putting the spoke in the system partition')
-        add_spoke(system, spoke, work)
+        add_spoke(system, spoke, work, capture)
         print('Putting the image together')
         with open(source, 'rb') as src, open(out + '.part', 'wb') as dst:
             dst.write(struct.pack('<I', zlib.crc32(new_env)) + new_env)
@@ -215,8 +223,14 @@ def main(args):
             print('settings block at 2880K:', 'yes' if f.read(len(MAGIC)) == MAGIC else 'no')
     elif args[:1] == ['extract'] and len(args) == 4:
         extract(*args[1:])
-    elif args[:1] == ['build'] and len(args) in (4, 5) and args[4:] in ([], ['--xz']):
-        build(args[1], args[2], args[3], compress=args[4:] == ['--xz'])
+    elif args[:1] == ['build'] and len(args) >= 4:
+        rest, capture = args[4:], None
+        if '--capture' in rest:
+            at = rest.index('--capture')
+            capture, rest = rest[at + 1], rest[:at] + rest[at + 2:]
+        if rest not in ([], ['--xz']):
+            sys.exit(__doc__)
+        build(args[1], args[2], args[3], compress=rest == ['--xz'], capture=capture)
     else:
         sys.exit(__doc__)
 

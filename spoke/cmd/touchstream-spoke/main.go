@@ -12,6 +12,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -32,6 +34,7 @@ import (
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/discovery"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/hub"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/media"
+	lcd "github.com/Cinderwire-co/TouchStream/spoke/internal/panel"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/provision"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/recorder"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/screen"
@@ -52,6 +55,10 @@ func main() {
 	source := flags.String("source", "hdmi", "hdmi, or replay:FILE.ts to replay a clip (the emulator)")
 	address := flags.String("address", "", "the address (and :port) phones reach this box at (default: its own)")
 	card := flags.String("card", "", "where the installer's settings are (default: the box's card)")
+	capture := flags.String("capture", "touchstream-capture", "the HDMI capture helper, and its flags")
+	audio := flags.String("audio", "-f alsa -ar 48000 -ac 2 -i hw:CARD=rockchiphdmiin", "ffmpeg's input for the HDMI sound")
+	fb := flags.String("fb", "/dev/fb0", "the box's screen (a framebuffer), if it has one")
+	touch := flags.String("touch", "/dev/input/event0", "the box's touch (evdev), if it has one")
 	_ = flags.Parse(args)
 
 	store, err := config.Open(*data)
@@ -72,7 +79,7 @@ func main() {
 		} else if did != "" {
 			log.Print(did)
 		}
-		err = run(ctx, store, *data, *source, *address)
+		err = run(ctx, store, *data, *source, *address, strings.Fields(*capture), strings.Fields(*audio), *fb, *touch)
 	case "pair":
 		if flags.NArg() != 2 {
 			log.Fatal("usage: touchstream-spoke pair HUB CODE")
@@ -90,7 +97,7 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, store *config.Store, data, source, address string) error {
+func run(ctx context.Context, store *config.Store, data, source, address string, capture, audio []string, fb, touch string) error {
 	var src media.Source
 	var replay *media.Replay // the emulator's stand-in for the HDMI input
 	switch {
@@ -99,9 +106,16 @@ func run(ctx context.Context, store *config.Store, data, source, address string)
 			Format: media.Signal{Present: true, Width: 1920, Height: 1080, FPS: 30}}
 		src = replay
 	case source == "hdmi":
-		// Until the capture helper is built: the spoke still starts, pairs and shows on its screen
-		log.Print("The PicoKVM's HDMI capture isn't built yet: no signal (in the emulator, use -source replay:FILE.ts)")
-		src = media.NoSignal{}
+		if _, err := exec.LookPath(capture[0]); err != nil {
+			// No capture helper (an image made before it): the spoke still starts, pairs and shows on its screen
+			log.Printf("No HDMI capture helper (%s): no signal", capture[0])
+			src = media.NoSignal{}
+			break
+		}
+		src = &media.Capture{Helper: capture, Audio: audio, Settings: func() (string, int) {
+			c := store.Get()
+			return nonEmpty(c.Framerate, "30"), cmp.Or(c.BitrateKbps, 8000)
+		}}
 	default:
 		return fmt.Errorf("unknown source %q", source)
 	}
@@ -149,6 +163,15 @@ func run(ctx context.Context, store *config.Store, data, source, address string)
 	}
 	settings.Saved = panel.Saved
 	screen.Routes(mux, panel)
+	// The box's own screen and touch, turned round as they are in the case (the emulator has
+	// neither: its screen is the /screen page)
+	if _, err := os.Stat(fb); err == nil {
+		go keepGoing(ctx, "The screen", (&lcd.Display{Path: fb, Rotate180: true, Render: panel.Render}).Run)
+	}
+	if _, err := os.Stat(touch); err == nil {
+		t := &lcd.Touch{Path: touch, Rotate180: true, Size: screen.Size, Down: panel.Down, Move: panel.Move, Up: panel.Up}
+		go keepGoing(ctx, "Touch", t.Run)
+	}
 	if replay != nil {
 		emulatorRoutes(mux, replay, store, panel)
 	}
@@ -183,6 +206,22 @@ func emulatorRoutes(mux *http.ServeMux, replay *media.Replay, store *config.Stor
 		log.Printf("Emulator: HDMI cable %s", map[bool]string{true: "plugged in", false: "pulled out"}[in])
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+// keepGoing runs fn, and again 2 s after it stops (a device's driver reset, say), until ctx ends;
+// it says why only when the reason changes.
+func keepGoing(ctx context.Context, what string, fn func(context.Context) error) {
+	var said string
+	for ctx.Err() == nil {
+		if err := fn(ctx); err != nil && err.Error() != said {
+			said = err.Error()
+			log.Printf("%s: %v (trying again)", what, err)
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 func nonEmpty(v, fallback string) string {

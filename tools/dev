@@ -245,9 +245,10 @@ case "${1:-}" in
         lite="$(find "$DEV/picokvm/Lite" -name '*.img' 2>/dev/null | head -1)"
         [ -n "$lite" ] || die "First: tools/dev firmware (Luckfox's images)"
         "$SPOKE_DEV" build
+        "$ROOT/spoke/capture/build"
         version="$(sed -n 's/^const Version = "\(.*\)"/\1/p' "$ROOT/spoke/internal/spoke/spoke.go")"
         python3 -I "$ROOT/tools/picokvm_image.py" build "$lite" "$ROOT/spoke/build/touchstream-spoke" \
-            "$DEV/picokvm/touchstream-spoke-picokvm-$version.img" ${2:+"$2"}
+            "$DEV/picokvm/touchstream-spoke-picokvm-$version.img" --capture "$ROOT/spoke/build/touchstream-capture" ${2:+"$2"}
         ;;
     reset)
         if [ -t 0 ]; then

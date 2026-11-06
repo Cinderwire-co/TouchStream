@@ -16,7 +16,9 @@
 # DATA=... another folder for its settings and recordings, and CARD=... a file with the
 # installer's settings block, which pairs it with a hub at its first start (the repo's tools/dev
 # does this). PICOKVM_SYSTEM=... (the system partition of Luckfox's microSD image) runs it on the
-# PicoKVM's own system instead of Alpine: its BusyBox, uClibc and ffmpeg 4.4.
+# PicoKVM's own system instead of Alpine: its BusyBox, uClibc and ffmpeg 4.4. SOURCE=hdmi takes the
+# box's way in, the capture helper (a stand-in playing the clip's H.264) and ffmpeg adding the sound
+# (a tone), in place of replaying the clip as it is.
 #
 # Copyright (c) 2025 Will Reeves and TouchStream Contributors
 # Licensed under the MIT License - see LICENSE file for details
@@ -30,17 +32,19 @@ CLIP="$SPOKE/testdata/clip.ts"
 
 build() {
     mkdir -p "$SPOKE/build"
-    (cd "$SPOKE" && GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 \
-        go build -trimpath -ldflags "-s -w" -o build/touchstream-spoke ./cmd/touchstream-spoke)
+    for cmd in touchstream-spoke touchstream-capture-standin; do
+        (cd "$SPOKE" && GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 \
+            go build -trimpath -ldflags "-s -w" -o build/$cmd ./cmd/$cmd)
+    done
     echo "Built build/touchstream-spoke ($(du -h "$SPOKE/build/touchstream-spoke" | cut -f1))"
 }
 
 clip() {
     mkdir -p "$SPOKE/testdata"
-    # What the RV1106's encoder will send: High profile, a keyframe every 2 s, AAC stereo
+    # What the RV1106's encoder will send: Main profile with no B-frames, a keyframe every 2 s, AAC stereo
     ffmpeg -hide_banner -loglevel error -y \
         -f lavfi -i testsrc2=size=1920x1080:rate=30 -f lavfi -i "sine=frequency=440:sample_rate=48000" -t 30 \
-        -c:v libx264 -profile:v high -level 4 -preset veryfast -pix_fmt yuv420p \
+        -c:v libx264 -profile:v main -bf 0 -level 4 -preset veryfast -pix_fmt yuv420p \
         -b:v 6M -maxrate 6M -bufsize 6M -g 60 -keyint_min 60 -sc_threshold 0 \
         -c:a aac -b:a 192k -ac 2 -af volume=0.1 -f mpegts "$CLIP"
     echo "Made testdata/clip.ts ($(du -h "$CLIP" | cut -f1))"
@@ -58,6 +62,11 @@ case "${1:-}" in
         port=6077 data="$SPOKE/.emulator"
         if [ "$1" = hubless ]; then NAME=$NAME-hubless port=6078 data="$SPOKE/.emulator-hubless"; fi
         data="${DATA:-$data}"
+        source=(-source replay:/opt/clip.ts)
+        if [ "${SOURCE:-}" = hdmi ]; then
+            source=(-source hdmi -capture "/opt/touchstream/touchstream-capture-standin /opt/clip.ts"
+                -audio "-re -f lavfi -i sine=frequency=440:sample_rate=48000")
+        fi
         card=()   # the installer's settings, as on a card it wrote
         if [ -n "${CARD:-}" ]; then card=(-v "$CARD:/opt/card.img:ro"); fi
         mkdir -p "$data"
@@ -81,7 +90,7 @@ case "${1:-}" in
         docker run -d --name "$NAME" --platform linux/arm/v7 --hostname picokvm-emulator \
             --cpus 1 --memory 256m --memory-swap 256m -p "$port:6077" -e TZ="${tz:-UTC}" \
             -v "$SPOKE/build:/opt/touchstream:ro" -v "$CLIP:/opt/clip.ts:ro" -v "$data:/userdata" ${card[@]+"${card[@]}"} \
-            "$image" /opt/touchstream/touchstream-spoke run -data /userdata/touchstream -source replay:/opt/clip.ts \
+            "$image" /opt/touchstream/touchstream-spoke run -data /userdata/touchstream "${source[@]}" \
             -address "$address:$port" ${CARD:+-card /opt/card.img} >/dev/null
         echo "Emulator running. Its screen: http://localhost:$port/screen (from a phone: http://$address:$port/screen)"
         ;;

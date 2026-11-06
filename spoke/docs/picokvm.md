@@ -36,15 +36,21 @@ Also on board: Ethernet (`eth0`, 10/100), ffmpeg 4.4 (with RTMP and RTMPS), `are
 The spoke takes the place of all four apps: one Go program, plus a small capture helper.
 
 - **Video**: `kvm_video` won't do as it is: it's made for remote desktops, so its bitrate tops out at 2 Mbps for
-  1080p, its keyframes are every 60 frames, and its frames carry no timestamps. Instead, `touchstream-capture`, a
-  helper of our own in C (MIT) against Rockchip's MPI: V4L2 capture from `/dev/video0` into DMA buffers, then H.264
-  at a constant bitrate (the hub's 4 to 12 Mbps) with a keyframe every 2 seconds, each frame with its capture time,
-  to the spoke over a pipe. It sets the EDID, so the source sends 1080p at the hub's frame rate. `kvm_video` shows
-  the sequence of calls; its GPL code isn't copied into the spoke.
-- **Sound**: from the `hdmiin` card with ALSA, 48 kHz PCM encoded to AAC by ffmpeg, into the spoke's MPEG-TS.
-  (`kvm_audio`'s Opus would need converting for YouTube anyway, and its source isn't published.)
-- **Screen**: drawn as in the emulator, then written to `/dev/fb0` as RGB565, turned 180°; touches from
-  `/dev/input/event0`.
+  1080p, its keyframes are every 60 frames, and its frames carry no timestamps. Instead, `touchstream-capture`
+  (`spoke/capture/`), a helper of our own in C (MIT) against Rockchip's MPI: V4L2 capture from `/dev/video0` into
+  DMA buffers (from the 66 MB kept for the video hardware), then H.264 from the hardware encoder at a constant
+  bitrate, Main profile with no B-frames, a keyframe every 2 seconds with its SPS and PPS, on its stdout. On its
+  stderr, a JSON line each time what's coming in changes. It gives the source an EDID asking for 1080p at the hub's
+  frame rate, with 2-channel PCM sound, as an HDMI sink (`edid-decode` passes all five rates). `kvm_video` showed
+  the devices and the sequence of calls; its GPL code isn't copied.
+- **Sound, and the stream**: for each signal, the box's ffmpeg takes the helper's H.264 and the sound from the
+  `hdmiin` card (ALSA: `hw:CARD=rockchiphdmiin`, to check on the box) as AAC, and makes the MPEG-TS the rest of the
+  spoke uses (`media.Capture`). Its clocks carry on from the last one's, so the stream never runs backwards when the
+  cable comes and goes. (`kvm_audio`'s Opus would need converting for YouTube anyway, and its source isn't
+  published.) In the emulator, `SOURCE=hdmi` runs all of this with a stand-in helper playing the clip's H.264.
+- **Screen**: drawn as in the emulator, then written to `/dev/fb0` (in its own layout, asked of it: RGB565), turned
+  180°, with the backlight at Luckfox's level; touches from `/dev/input/event0`, turned the same way
+  (`spoke/internal/panel`).
 - **ffmpeg** on the box makes the phone copies and trims, and the direct stream to YouTube.
 
 ## The image
@@ -82,6 +88,10 @@ box's own ffmpeg 4.4:
   70 MB in all, under emulation (which adds to it), of the 170 MB or so the box has for programs (its 256 MB,
   less 66 MB kept for the video hardware, `rk_dma_heap_cma=66M`).
 - The spoke's image: its start script runs the spoke, which pairs itself from a card the installer wrote.
+- The way in for HDMI, with a stand-in for the capture helper: a recording has the picture and the sound, and its
+  clocks only go forward when the cable's pulled and put back.
+- The screen and touch drivers, with a file for the framebuffer (it matches the screen page) and a pipe for the touch
+  (taps in the panel's own layout, turned round, open the recordings).
 
 ## On the box, in order
 
@@ -95,8 +105,10 @@ box's own ffmpeg 4.4:
    (`arecord -D hw:N -f S16_LE -r 48000 -c 2 tone.wav`): check its pitch and length. If it's fast, compare the rate
    ALSA was asked for with the TC358743's audio settings, as it drives the clocks.
 3. **Capture**: `v4l2-ctl -d /dev/v4l-subdev2 --query-dv-timings` at 1080p30 and 1080p60, and `media-ctl -p`.
-4. **The encoder**: build `touchstream-capture` with the SDK's toolchain; 1080p60 at 8 Mbps; CPU with the spoke
-   running.
-5. **Screen and touch**: a test pattern on `/dev/fb0`; `evtest /dev/input/event0` at each corner.
+4. **The encoder**: `touchstream-capture` (built by `spoke/capture/build`, in the image) at 1080p60 and 8 Mbps;
+   whether encoding a frame at a time keeps up at 60; CPU with the spoke running. It compiles with Luckfox's
+   toolchain and loads against the box's own libraries, which is as far as it goes without the box.
+5. **Screen and touch**: the spoke's screen on the panel, the right way up, and `evtest /dev/input/event0` at each
+   corner (that the touch is turned as the picture is).
 6. **ffmpeg**: what AAC at 128 kbps costs in CPU; RTMPS to YouTube.
 7. **The image**: build it, write it with the installer, and check it pairs itself at its first start.
