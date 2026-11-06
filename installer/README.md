@@ -45,3 +45,9 @@ with `TOUCHSTREAM-PROVISION-V1` and a newline at a 64 KiB boundary does. To chec
 `-card card.dmg`: it pairs itself from the card's settings.
 
 `TOUCHSTREAM_SOURCE` (developer mode) installs the hub from a local checkout instead of the release.
+
+## Releasing
+
+`tools/release-mac` builds the Mac app for Apple silicon and Intel, signs it with your Developer ID, puts it in a
+disk image, and has Apple notarize it, so it opens with no warning. The top of the script says how to save your
+notarization credentials once. The Windows app isn't signed yet, so Windows warns before it runs it.

@@ -98,6 +98,7 @@ records every broadcast for you to download, edit and upload yourself.
 ```bash
 tools/dev up        # the hub from this checkout, a stand-in YouTube, and two emulated spokes
 tools/dev status    # where they are, and the dev dashboard's password
+tools/dev firmware  # Luckfox's PicoKVM images, from the zips of their Google Drive folder
 tools/dev down
 ```
 

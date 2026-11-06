@@ -7,6 +7,8 @@
 #   tools/dev status          what's running, and where
 #   tools/dev restart [hub]   restart the hub on the code as it is now (or everything)
 #   tools/dev logs [hub|youtube|spoke|hubless]
+#   tools/dev firmware [ZIP]  unpack Luckfox's PicoKVM images into .dev/picokvm/, from the zips Google
+#                             Drive makes of their folder (default: ~/Downloads/Luckfox PicoKVM-*.zip)
 #   tools/dev reset           stop everything and delete .dev/ (the dev hub's data and recordings)
 #
 # It all lives in .dev/ (git-ignored). The dev hub has ports of its own, so it runs beside a hub
@@ -203,6 +205,24 @@ case "${1:-}" in
             hubless) docker logs -f $EMULATOR-hubless ;;
             *) die "logs: hub, youtube, spoke or hubless" ;;
         esac
+        ;;
+    firmware)
+        # Luckfox's images (https://wiki.luckfox.com/Luckfox-PicoKVM/Flash-image/): Drive refuses scripted
+        # downloads, so they come from a browser, as zips; only the images are kept, by folder
+        shift
+        zips=("$@")
+        [ ${#zips[@]} -gt 0 ] || for z in "$HOME"/Downloads/Luckfox\ PicoKVM-*.zip; do [ -f "$z" ] && zips+=("$z"); done
+        [ ${#zips[@]} -gt 0 ] || die "No Luckfox zips: download their Drive folder in a browser, or give the zip's path"
+        for z in "${zips[@]}"; do
+            unzip -Z1 "$z" | grep '/firmware/.*\.img$' | while read -r entry; do
+                to="$DEV/picokvm/$(basename "$(dirname "$entry")")"
+                [ -f "$to/$(basename "$entry")" ] && continue
+                say "Unpacking $(basename "$entry")"
+                mkdir -p "$to"
+                unzip -q -j -o "$z" "$entry" -d "$to"
+            done
+        done
+        (cd "$DEV" && find picokvm -name '*.img' -print0 | xargs -0 du -h)
         ;;
     reset)
         if [ -t 0 ]; then

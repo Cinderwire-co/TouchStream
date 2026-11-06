@@ -57,7 +57,8 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 1. **The TouchStream installer** for Mac and Windows (`installer/`, built and tested with a disk image for a card):
    it installs or finds the hub, asks about spokes, checks you have the right box, and writes and checks each
    spoke's microSD card, already paired with the hub. Still to do: sign and notarize it (an Apple Developer ID and
-   a Windows code-signing certificate), and write a real card once the image exists.
+   a Windows code-signing certificate; the Mac's is done, `installer/tools/release-mac`), and write a real card once
+   the image exists.
 2. **The spoke on the real box** (a Luckfox PicoKVM arrives Nov 7): HDMI capture and its hardware encoder, HDMI
    sound, the screen on the panel, ffmpeg on board, and the image the installer writes (below).
 3. **Straight to YouTube from the spoke** when the hub can't be reached (below).
@@ -112,11 +113,13 @@ Working in the emulator (`spoke/tools/dev emulate`: an ARMv7 container held to t
 replaying a clip as its HDMI input): the hub link and adoption, the SRT stream, recording and upload, the screen with
 Go live, End and Record, and recordings to phones by QR code. Still to come:
 
-- **On the box**: HDMI capture and the RV1106's hardware H.264 encoder, at the hub's frame rate (it's sold as
-  1080p60); the EDID that asks the source for that rate; the screen on the panel itself, and its touch; ffmpeg on
-  board, for phone copies, clips and the direct stream; its time zone, from the hub.
-- **HDMI sound.** Its TC358743 has the sound wired inside, but the driver plays it 1.29× fast (a user's measurement),
-  which looks like an audio clock setting we can fix with the open SDK.
+- **On the box** (what's inside, and the checks in order: [spoke/docs/picokvm.md](../spoke/docs/picokvm.md)):
+  HDMI capture and the RV1106's hardware H.264 encoder, at the hub's frame rate (it's sold as 1080p60), through a
+  small capture helper of our own, as Luckfox's `kvm_video` tops out at 2 Mbps; the EDID that asks the source for
+  that rate; the screen (`/dev/fb0`) and its touch (`/dev/input/event0`); ffmpeg on board (it has RTMPS), for phone
+  copies, clips and the direct stream; its time zone, from the hub.
+- **HDMI sound.** Its TC358743 has the sound wired inside, to the RV1106's I2S, but the driver plays it 1.29× fast (a
+  user's measurement). The TC358743 drives the audio clocks, so it looks like a clock setting between the two.
 - **The image the installer writes**: built with Luckfox's Buildroot SDK, with the spoke and ffmpeg, released on
   GitHub as `touchstream-spoke-picokvm-VERSION.img.xz` with a `.sha256` beside it. It needs a 64 KiB block for the
   installer to fill in: at a 64 KiB boundary in the image's first 64 MiB, starting `TOUCHSTREAM-PROVISION-V1` and a
