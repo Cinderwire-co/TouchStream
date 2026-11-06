@@ -9,6 +9,8 @@
 #   tools/dev logs [hub|youtube|spoke|hubless]
 #   tools/dev firmware [ZIP]  unpack Luckfox's PicoKVM images into .dev/picokvm/, from the zips Google
 #                             Drive makes of their folder (default: ~/Downloads/Luckfox PicoKVM-*.zip)
+#   tools/dev image [--xz]    the spoke's image for the PicoKVM, made from Luckfox's (tools/dev firmware
+#                             first), into .dev/picokvm/: the installer writes it (TOUCHSTREAM_SPOKE_IMAGE)
 #   tools/dev reset           stop everything and delete .dev/ (the dev hub's data and recordings)
 #
 # It all lives in .dev/ (git-ignored). The dev hub has ports of its own, so it runs beside a hub
@@ -157,8 +159,20 @@ with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'wb') as 
 EOF
 }
 
+# The microSD image's system partition, for the emulator to run on the box's own system
+system_partition() {
+    local lite
+    lite="$(find "$DEV/picokvm/Lite" -name '*.img' 2>/dev/null | head -1)"
+    [ -n "$lite" ] || return 0
+    [ -f "$DEV/picokvm/system.img" ] && [ "$DEV/picokvm/system.img" -nt "$lite" ] && return 0
+    say "Taking the system partition out of $(basename "$lite"), for the emulator"
+    python3 -I "$ROOT/tools/picokvm_image.py" extract "$lite" system_a "$DEV/picokvm/system.img"
+}
+
 start_spokes() {
     say "Starting the spokes"
+    # On the PicoKVM's own system, once tools/dev firmware has it; else on Alpine
+    if [ -f "$DEV/picokvm/system.img" ]; then export PICOKVM_SYSTEM="$DEV/picokvm/system.img"; fi
     DATA="$DEV/spokes/$SPOKE_NAME" CARD="$DEV/cards/$SPOKE_NAME.img" "$SPOKE_DEV" emulate >/dev/null
     DATA="$DEV/spokes/hubless" "$SPOKE_DEV" hubless >/dev/null
 }
@@ -169,7 +183,9 @@ status() {
     local up
     if running hub; then echo "Hub          $HUB   password: $(password)"; else echo "Hub          stopped"; fi
     if running youtube; then echo "YouTube      stand-in on :$YOUTUBE_PORT (calls: http://127.0.0.1:$YOUTUBE_PORT/calls)"; else echo "YouTube      stopped"; fi
-    if [ -n "$(container $EMULATOR)" ]; then echo "Spoke        http://localhost:6077/screen   $SPOKE_NAME, paired with the hub"
+    local on="Alpine"
+    docker ps --filter "name=^$EMULATOR\$" --format '{{.Image}}' | grep -q picokvm && on="the PicoKVM's own system"
+    if [ -n "$(container $EMULATOR)" ]; then echo "Spoke        http://localhost:6077/screen   $SPOKE_NAME, paired with the hub, on $on"
     else echo "Spoke        stopped"; fi
     if [ -n "$(container $EMULATOR-hubless)" ]; then echo "Hubless      http://localhost:6078/screen   no hub: tap the gray dot for setup"
     else echo "Hubless      stopped"; fi
@@ -222,7 +238,16 @@ case "${1:-}" in
                 unzip -q -j -o "$z" "$entry" -d "$to"
             done
         done
+        system_partition
         (cd "$DEV" && find picokvm -name '*.img' -print0 | xargs -0 du -h)
+        ;;
+    image)
+        lite="$(find "$DEV/picokvm/Lite" -name '*.img' 2>/dev/null | head -1)"
+        [ -n "$lite" ] || die "First: tools/dev firmware (Luckfox's images)"
+        "$SPOKE_DEV" build
+        version="$(sed -n 's/^const Version = "\(.*\)"/\1/p' "$ROOT/spoke/internal/spoke/spoke.go")"
+        python3 -I "$ROOT/tools/picokvm_image.py" build "$lite" "$ROOT/spoke/build/touchstream-spoke" \
+            "$DEV/picokvm/touchstream-spoke-picokvm-$version.img" ${2:+"$2"}
         ;;
     reset)
         if [ -t 0 ]; then

@@ -23,6 +23,12 @@ type Signal struct {
 	FPS     float64
 }
 
+// NoSignal is the box's HDMI input until its capture is built: never a signal.
+type NoSignal struct{}
+
+func (NoSignal) Run(ctx context.Context, emit func([]byte)) error { <-ctx.Done(); return nil }
+func (NoSignal) Signal() Signal                                   { return Signal{} }
+
 type Source interface {
 	// Run makes the stream until ctx ends, calling emit with whole packets (a multiple of 188 bytes).
 	Run(ctx context.Context, emit func([]byte)) error

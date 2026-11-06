@@ -15,7 +15,8 @@
 # the real box. Needs Go and Docker Desktop. ADDRESS=... sets the address phones use for it,
 # DATA=... another folder for its settings and recordings, and CARD=... a file with the
 # installer's settings block, which pairs it with a hub at its first start (the repo's tools/dev
-# does this).
+# does this). PICOKVM_SYSTEM=... (the system partition of Luckfox's microSD image) runs it on the
+# PicoKVM's own system instead of Alpine: its BusyBox, uClibc and ffmpeg 4.4.
 #
 # Copyright (c) 2025 Will Reeves and TouchStream Contributors
 # Licensed under the MIT License - see LICENSE file for details
@@ -60,8 +61,19 @@ case "${1:-}" in
         card=()   # the installer's settings, as on a card it wrote
         if [ -n "${CARD:-}" ]; then card=(-v "$CARD:/opt/card.img:ro"); fi
         mkdir -p "$data"
-        docker image inspect "$IMAGE" >/dev/null 2>&1 ||
-            docker build -q --platform linux/arm/v7 -t "$IMAGE" "$SPOKE/tools/emulator" >/dev/null
+        image="$IMAGE"
+        if [ -n "${PICOKVM_SYSTEM:-}" ]; then
+            image="$IMAGE:picokvm"
+            if ! docker image inspect "$image" >/dev/null 2>&1; then
+                echo "Building the emulator on the PicoKVM's own system (once)"
+                tar -cf - -C "$(dirname "$PICOKVM_SYSTEM")" "$(basename "$PICOKVM_SYSTEM")" -C "$SPOKE/tools/emulator" picokvm.Dockerfile |
+                    docker build -q --platform linux/arm/v7 -f picokvm.Dockerfile --build-arg SYSTEM="$(basename "$PICOKVM_SYSTEM")" \
+                        -t "$image" - >/dev/null
+            fi
+        else
+            docker image inspect "$IMAGE" >/dev/null 2>&1 ||
+                docker build -q --platform linux/arm/v7 -t "$IMAGE" "$SPOKE/tools/emulator" >/dev/null
+        fi
         # Phones reach the emulator at this computer's address, not the container's
         address="${ADDRESS:-$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I | cut -d' ' -f1)}"
         tz="$(readlink /etc/localtime | sed 's|.*zoneinfo/||')"
@@ -69,7 +81,7 @@ case "${1:-}" in
         docker run -d --name "$NAME" --platform linux/arm/v7 --hostname picokvm-emulator \
             --cpus 1 --memory 256m --memory-swap 256m -p "$port:6077" -e TZ="${tz:-UTC}" \
             -v "$SPOKE/build:/opt/touchstream:ro" -v "$CLIP:/opt/clip.ts:ro" -v "$data:/userdata" ${card[@]+"${card[@]}"} \
-            "$IMAGE" /opt/touchstream/touchstream-spoke run -data /userdata/touchstream -source replay:/opt/clip.ts \
+            "$image" /opt/touchstream/touchstream-spoke run -data /userdata/touchstream -source replay:/opt/clip.ts \
             -address "$address:$port" ${CARD:+-card /opt/card.img} >/dev/null
         echo "Emulator running. Its screen: http://localhost:$port/screen (from a phone: http://$address:$port/screen)"
         ;;

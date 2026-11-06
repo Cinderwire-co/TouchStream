@@ -24,9 +24,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Cinderwire-co/TouchStream/spoke/internal/ts"
 )
 
 const (
@@ -103,6 +106,7 @@ func (p Plan) Due(now time.Time) *Event {
 // Stream relays the spoke's stream to RTMP(S) targets while it has some.
 type Stream struct {
 	mu      sync.Mutex
+	gen     int // which ffmpeg this is (each starts at a keyframe)
 	targets []Target
 	in      io.WriteCloser
 	cmd     *exec.Cmd
@@ -154,6 +158,8 @@ func (s *Stream) State() string {
 // Run feeds the stream from in to ffmpeg while there are targets, restarting it after a failure.
 func (s *Stream) Run(ctx context.Context, in <-chan []byte) {
 	go s.keep(ctx)
+	var start startPoint
+	var gen int
 	for {
 		select {
 		case <-ctx.Done():
@@ -161,15 +167,46 @@ func (s *Stream) Run(ctx context.Context, in <-chan []byte) {
 			return
 		case chunk := <-in:
 			s.mu.Lock()
-			w := s.in
+			w, g := s.in, s.gen
 			s.mu.Unlock()
-			if w != nil {
-				if _, err := w.Write(chunk); err != nil {
+			if g != gen { // a new ffmpeg: it starts at the next keyframe
+				gen, start.started = g, false
+			}
+			if out := start.next(chunk); w != nil && out != nil {
+				if _, err := w.Write(out); err != nil {
 					s.fail(w, err)
 				}
 			}
 		}
 	}
+}
+
+// startPoint holds a stream back until a keyframe, then starts it with the stream's tables: an
+// ffmpeg that joins part way through can't tell the picture's size otherwise (the box's, 4.4,
+// gives up: "dimensions not set").
+type startPoint struct {
+	tables  ts.Tables
+	started bool
+}
+
+// next is what of chunk to send: nothing until a keyframe begins, then the tables and the rest.
+func (sp *startPoint) next(chunk []byte) []byte {
+	from := -1
+	for i := 0; i+ts.PacketSize <= len(chunk); i += ts.PacketSize {
+		p := chunk[i : i+ts.PacketSize]
+		sp.tables.Note(p)
+		if !sp.started && from < 0 && sp.tables.Ready(p) {
+			from = i
+		}
+	}
+	switch {
+	case sp.started:
+		return chunk
+	case from < 0:
+		return nil
+	}
+	sp.started = true
+	return append(append(append([]byte{}, sp.tables.PAT...), sp.tables.PMT...), chunk[from:]...)
 }
 
 func (s *Stream) keep(ctx context.Context) {
@@ -203,6 +240,21 @@ func Args(targets []Target) []string {
 		"-map", "0:v", "-map", "0:a?", "-c", "copy", "-tag:v", "7", "-tag:a", "10", "-f", "tee", strings.Join(outs, "|")}
 }
 
+// Sending reports whether a line of ffmpeg's -progress says it's connected and sending. The box's
+// ffmpeg (4.4) gives the tee muxer no total_size, so the output clock moving counts too: ffmpeg
+// writes nothing until its destinations have connected.
+func Sending(line string) bool {
+	key, value, _ := strings.Cut(line, "=")
+	switch key {
+	case "total_size":
+		return value != "0" && value != "N/A"
+	case "out_time_us", "out_time_ms": // (both are microseconds)
+		n, err := strconv.ParseInt(value, 10, 64)
+		return err == nil && n > 0
+	}
+	return false
+}
+
 func (s *Stream) startLocked() error {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		return errors.New("streaming straight to YouTube needs ffmpeg")
@@ -222,11 +274,11 @@ func (s *Stream) startLocked() error {
 		return err
 	}
 	s.cmd, s.in, s.err, s.sending = cmd, in, "", false
+	s.gen++
 	go func() {
-		// Once bytes have gone out, it's connected and sending
 		lines := bufio.NewScanner(progress)
 		for lines.Scan() {
-			if size, ok := strings.CutPrefix(lines.Text(), "total_size="); ok && size != "0" && size != "N/A" {
+			if Sending(lines.Text()) {
 				s.mu.Lock()
 				if s.cmd == cmd {
 					s.sending = true

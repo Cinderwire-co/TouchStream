@@ -39,7 +39,8 @@ hdiutil create -size 64m -fs "MS-DOS FAT32" -volname OLDCARD -layout MBRSPUD car
 TOUCHSTREAM_INSTALLER_DEV=1 TOUCHSTREAM_SPOKE_IMAGE=spoke.img.xz wails dev -s -skipbindings
 ```
 
-A disk image of your own needs no password to write. `wails dev` also serves the window at http://localhost:34115
+A disk image of your own needs no password to write. On Windows, a VHD (`create vdisk` and `attach vdisk` in
+diskpart) is a card in developer mode, written with the same writer, which needs an administrator. `wails dev` also serves the window at http://localhost:34115
 to drive from a browser. The spoke's image needs its settings block (see the roadmap); for a fake one, any file
 with `TOUCHSTREAM-PROVISION-V1` and a newline at a 64 KiB boundary does. To check a card, run the spoke emulator with
 `-card card.dmg`: it pairs itself from the card's settings.

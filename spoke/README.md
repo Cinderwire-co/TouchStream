@@ -26,6 +26,10 @@ container held to the box's limits (one core, 256 MB). A ready-made H.264 + AAC 
 real time, stands in for the HDMI input and the hardware encoder; on the box the encoder costs
 almost no CPU, so the rest of the spoke sees the same load.
 
+Once the repo's `tools/dev firmware` has unpacked Luckfox's images, the emulators run on the
+PicoKVM's own system (its root filesystem: BusyBox, uClibc, ffmpeg 4.4) instead of Alpine, so the
+spoke's ffmpeg commands run on the ffmpeg the box has. (`PICOKVM_SYSTEM=` here does the same.)
+
 You need Go and Docker Desktop.
 
 ```bash

@@ -33,9 +33,10 @@ type App struct {
 	dev   bool
 	cache string
 
-	mu    sync.Mutex
-	hub   *hubapi.Client // signed in, once it is
-	image string         // the spoke's image, ready to write
+	mu       sync.Mutex
+	hub      *hubapi.Client // signed in, once it is
+	image    string         // the spoke's image, ready to write
+	settings bool           // it has a settings block, so cards can be paired with the hub
 }
 
 func NewApp(dev bool) *App {
@@ -115,10 +116,11 @@ func (a *App) signIn(url string, how func(*hubapi.Client) error) error {
 
 // ImageState is the spoke's image: ready to write, or why not.
 type ImageState struct {
-	Ready   bool   `json:"ready"`
-	Size    int64  `json:"size"`
-	Version string `json:"version,omitempty"`
-	Source  string `json:"source,omitempty"`
+	Ready    bool   `json:"ready"`
+	Size     int64  `json:"size"`
+	Settings bool   `json:"settings"` // cards can be paired with the hub (false: adopt them in the dashboard)
+	Version  string `json:"version,omitempty"`
+	Source   string `json:"source,omitempty"`
 }
 
 const releases = "https://api.github.com/repos/Cinderwire-co/TouchStream/releases?per_page=20"
@@ -162,10 +164,19 @@ func (a *App) useImage(path, version string) (ImageState, error) {
 	if err != nil {
 		return ImageState{}, err
 	}
+	f, err := os.Open(plain)
+	if err != nil {
+		return ImageState{}, err
+	}
+	settings, err := image.HasBlock(f)
+	f.Close()
+	if err != nil {
+		return ImageState{}, err
+	}
 	a.mu.Lock()
-	a.image = plain
+	a.image, a.settings = plain, settings
 	a.mu.Unlock()
-	return ImageState{Ready: true, Size: size, Version: version, Source: path}, nil
+	return ImageState{Ready: true, Size: size, Settings: settings, Version: version, Source: path}, nil
 }
 
 func latestImage(ctx context.Context) (asset, sum, version string, err error) {
@@ -289,7 +300,7 @@ type Written struct {
 // in), then writes and checks the card (asking for admin rights), then ejects it.
 func (a *App) WriteCard(card cards.Card, name string) (Written, error) {
 	a.mu.Lock()
-	img, hub := a.image, a.hub
+	img, hub, settings := a.image, a.hub, a.settings
 	a.mu.Unlock()
 	if img == "" {
 		return Written{}, errors.New("the spoke's software isn't ready yet")
@@ -309,8 +320,11 @@ func (a *App) WriteCard(card cards.Card, name string) (Written, error) {
 		return Written{}, flash.ErrTooSmall
 	}
 	p := &image.Provision{Name: strings.TrimSpace(name)}
+	if !settings {
+		p = nil // nowhere on the card for them: it's adopted in the dashboard instead
+	}
 	var spoke hubapi.Spoke
-	if hub != nil {
+	if hub != nil && p != nil {
 		if spoke, err = hub.MakeSpoke(a.ctx, p.Name); err != nil {
 			return Written{}, fmt.Errorf("registering %s with the hub: %w", p.Name, err)
 		}
@@ -325,9 +339,14 @@ func (a *App) WriteCard(card cards.Card, name string) (Written, error) {
 	}
 	_ = cards.Eject(card)
 	w := Written{Paired: spoke.ID != ""}
-	if runtime.GOOS == "windows" {
-		w.Note = "If Windows offers to format the card, choose Cancel: it's written, Windows just can't read it."
+	var notes []string
+	if p == nil {
+		notes = append(notes, "This version of the spoke's software can't take the hub's address, so the card isn't paired.")
 	}
+	if runtime.GOOS == "windows" {
+		notes = append(notes, "If Windows offers to format the card, choose Cancel: it's written, Windows just can't read it.")
+	}
+	w.Note = strings.Join(notes, " ")
 	return w, nil
 }
 
@@ -337,7 +356,10 @@ func (a *App) write(card cards.Card, img string, p *image.Provision) error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	files := map[string]any{"card.json": card, "settings.json": p}
+	files := map[string]any{"card.json": card}
+	if p != nil {
+		files["settings.json"] = p
+	}
 	for name, v := range files {
 		data, _ := json.Marshal(v)
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
@@ -351,8 +373,10 @@ func (a *App) write(card cards.Card, img string, p *image.Provision) error {
 	stop := make(chan struct{})
 	go elevate.Watch(progress, 150*time.Millisecond, stop, func(p elevate.Progress) { wails.EventsEmit(a.ctx, "card:progress", p) })
 	defer close(stop)
-	args := []string{"write-card", "--card", filepath.Join(dir, "card.json"), "--image", img,
-		"--provision", filepath.Join(dir, "settings.json"), "--progress", progress}
+	args := []string{"write-card", "--card", filepath.Join(dir, "card.json"), "--image", img, "--progress", progress}
+	if p != nil {
+		args = append(args, "--provision", filepath.Join(dir, "settings.json"))
+	}
 	if cards.Writable(card) { // a disk image of a developer's own: no admin rights needed
 		if code := writeCard(args[1:]); code != 0 {
 			return lastError(progress)

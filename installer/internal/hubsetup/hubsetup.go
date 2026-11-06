@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -60,14 +61,37 @@ func Probe(ctx context.Context, url string) (Found, error) {
 // Find looks for the hub on this computer: installed (the scripts' start-up entry), and running on
 // one of the ports the scripts choose from (8080, or the next free one).
 func Find(ctx context.Context) Found {
-	found := Found{Installed: installed()}
+	ports := make([]int, 0, 20)
 	for port := 8080; port <= 8099; port++ {
-		if f, err := Probe(ctx, fmt.Sprintf("http://localhost:%d", port)); err == nil {
-			f.Installed = found.Installed
+		ports = append(ports, port)
+	}
+	found := findOn(ctx, ports)
+	found.Installed = installed()
+	return found
+}
+
+// findOn asks every port at once (Windows takes about 2 s to refuse each), at 127.0.0.1 (where
+// localhost is IPv6 first), and takes the lowest that's a hub: the one the scripts chose first.
+func findOn(ctx context.Context, ports []int) Found {
+	answers := make([]Found, len(ports))
+	var wg sync.WaitGroup
+	for i, port := range ports {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if f, err := Probe(ctx, fmt.Sprintf("http://127.0.0.1:%d", port)); err == nil {
+				f.URL = fmt.Sprintf("http://localhost:%d", port) // as it's shown, and opened
+				answers[i] = f
+			}
+		}()
+	}
+	wg.Wait()
+	for _, f := range answers {
+		if f.Running {
 			return f
 		}
 	}
-	return found
+	return Found{}
 }
 
 func installed() bool {

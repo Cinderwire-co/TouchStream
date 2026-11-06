@@ -99,7 +99,9 @@ func run(ctx context.Context, store *config.Store, data, source, address string)
 			Format: media.Signal{Present: true, Width: 1920, Height: 1080, FPS: 30}}
 		src = replay
 	case source == "hdmi":
-		return errors.New("the PicoKVM's HDMI capture isn't built yet: use -source replay:FILE.ts")
+		// Until the capture helper is built: the spoke still starts, pairs and shows on its screen
+		log.Print("The PicoKVM's HDMI capture isn't built yet: no signal (in the emulator, use -source replay:FILE.ts)")
+		src = media.NoSignal{}
 	default:
 		return fmt.Errorf("unknown source %q", source)
 	}

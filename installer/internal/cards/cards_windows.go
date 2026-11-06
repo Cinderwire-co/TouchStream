@@ -55,7 +55,7 @@ func List(virtual bool) ([]Card, error) {
 		bus := f.Bus
 		disks = append(disks, Disk{Card: Card{ID: id, Device: `\\.\PhysicalDrive` + id, Name: strings.TrimSpace(f.Name),
 			Bus: bus, Size: f.Size, ReadOnly: f.ReadOnly, Virtual: bus == "File Backed Virtual", Volumes: f.Volumes},
-			Removable: f.Removable || bus == "SD" || bus == "MMC", System: f.System})
+			Removable: f.Removable || bus == "SD" || bus == "MMC" || bus == "File Backed Virtual", System: f.System})
 	}
 	return Offer(disks, virtual), nil
 }

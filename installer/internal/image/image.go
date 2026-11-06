@@ -125,6 +125,28 @@ type Result struct {
 	Provisioned bool
 }
 
+// HasBlock reports whether the image has a settings block for Write to fill in. Without one (an
+// image not made for the installer, such as Luckfox's own), the box can't be paired from its card.
+func HasBlock(src io.Reader) (bool, error) {
+	block := make([]byte, len(Magic))
+	for at := 0; at < searchIn; at += BlockSize {
+		if _, err := io.ReadFull(src, block); err == io.EOF || err == io.ErrUnexpectedEOF {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+		if bytes.Equal(block, []byte(Magic)) {
+			return true, nil
+		}
+		if _, err := io.CopyN(io.Discard, src, BlockSize-int64(len(Magic))); err == io.EOF {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
 // Padded is how much Write writes for an image of size bytes: whole sectors.
 func Padded(size int64) int64 { return (size + sector - 1) / sector * sector }
 

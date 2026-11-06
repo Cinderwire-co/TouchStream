@@ -84,6 +84,22 @@ func TestAnImageWithoutABlockIsWrittenAsItIs(t *testing.T) {
 	}
 }
 
+func TestFindingTheBlock(t *testing.T) {
+	for name, c := range map[string]struct {
+		img  []byte
+		want bool
+	}{
+		"at 2880K":   {fake(4<<20, 2880<<10), true},
+		"none":       {fake(4<<20, -1), false},
+		"misaligned": {fake(4<<20, 3<<10), false},
+		"tiny image": {[]byte("TOUCH"), false},
+	} {
+		if got, err := HasBlock(bytes.NewReader(c.img)); err != nil || got != c.want {
+			t.Errorf("%s: %v, %v", name, got, err)
+		}
+	}
+}
+
 func TestUnpackingAGzippedImage(t *testing.T) {
 	dir := t.TempDir()
 	img := fake(3<<20, 0)

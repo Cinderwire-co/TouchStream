@@ -53,8 +53,13 @@ The spoke takes the place of all four apps: one Go program, plus a small capture
   are in the U-Boot environment at its start (`env`, 32K, CRC-checked), as
   `blkdevparts=mmcblk1:32K(env),512K@32K(idblock),512K(uboot_a),512K(uboot_b),256K(misc),1M(security),32M(boot_a),32M(boot_b),640M(system_a),640M(system_b),-(userdata)`,
   with `root=/dev/mmcblk1p9` (`system_a`). The idblock (`RKNS`) is where the boot ROM looks, at 32K.
-- So the first image can be made from theirs, with no SDK build: take its partitions out at those offsets, put the
-  spoke in place of their apps, and put it back together with a new environment. Later, built with
+- So the spoke's image is made from theirs, with no SDK build (`tools/dev image`, with
+  `tools/picokvm_image.py`): the spoke goes in both system partitions, and Luckfox's launcher
+  (`/oem/usr/bin/RkLunch.sh`, once the drivers and network are up) starts `/usr/bin/touchstream-start` in place of
+  their apps. That grows the card's last partition's filesystem to fill the card, once, and keeps the spoke running,
+  logging to syslog. Until the capture helper is built, the spoke starts with no signal, so it still pairs and shows
+  up. Checked in the emulator: the other partitions are byte for byte Luckfox's, and the spoke pairs itself from a
+  card the installer wrote. Later, built with
   [Luckfox's SDK](https://github.com/LuckfoxTECH/luckfox-pico) once the PicoKVM's board config is published.
 - The installer's settings block goes in a gap, not a partition of its own: the partitions are numbered, and
   Luckfox's scripts use the numbers (`mmcblk1p9`), so a new one would move the rest. `32M@2944K(boot_a)` leaves 96K
@@ -63,6 +68,20 @@ The spoke takes the place of all four apps: one Go program, plus a small capture
   it from `/dev/mmcblk1`.
 - Licenses: Rockchip's media libraries are proprietary, and shipped as part of the SDK; the GPL parts (the kernel,
   BusyBox) need their sources offered, as a link to the SDK revision the image is built from.
+
+## Checked in the emulator, on the box's own system
+
+The emulator runs on the PicoKVM's root filesystem (see the spoke's README), so these are checked against the
+box's own ffmpeg 4.4:
+
+- Straight to YouTube (the tee muxer to RTMP), phone copies and clips, and AAC from PCM at 128 kbps.
+- Two things 4.4 does differently, now handled: it gives the tee muxer no `total_size` in its progress (the spoke
+  watches its output clock instead), and it can't start part way through a stream (each ffmpeg the spoke starts
+  is fed from a keyframe, with the stream's tables first).
+- Memory, with everything at once (live straight to an RTMP server, recording, a phone copy and a clip): under
+  70 MB in all, under emulation (which adds to it), of the 170 MB or so the box has for programs (its 256 MB,
+  less 66 MB kept for the video hardware, `rk_dma_heap_cma=66M`).
+- The spoke's image: its start script runs the spoke, which pairs itself from a card the installer wrote.
 
 ## On the box, in order
 
