@@ -292,7 +292,8 @@ export function BroadcastModal({ event, planned, spokes, channels, defaultSpoke,
             </div>`}
           <span class="eyebrow section-gap">Where</span>
           <div class="field"><span>Spoke</span>
-            <${Select} label="Spoke" value=${f.spoke_id} disabled=${!!(event || planned)} onChange=${(v) => set('spoke_id', v)}
+            <${Select} label="Spoke" value=${f.spoke_id} disabled=${!!(planned || (event && (event.state !== 'scheduled' || series)))}
+              onChange=${(v) => set('spoke_id', v)}
               options=${spokes.map((s) => [s.id, `${s.name}${s.location ? ` · ${s.location}` : ''}`])} /></div>
           <div class="field"><span>Stream to</span>
             ${channels.length === 0 ? html`<p class="muted small"><b>Record only.</b> The hub records this broadcast (plus
@@ -412,6 +413,7 @@ function EventRow({ event, spoke, showSpoke, onEdit, refresh }) {
     : event.state === 'ended' ? html`<span class="chip">${event.started_at || event.recordings.some((c) => c.source === 'hub')
       ? `Aired · ${duration(event)}` : event.recordings.length ? `Aired on the spoke · ${duration(event)}` : 'Missed'}</span>`
     : event.state === 'planned' ? html`<span class="chip" title="Its broadcast is created, on YouTube too, a week before">Planned</span>`
+    : event.spoke_removed ? html`<span class="chip bad" title="Its spoke was removed: edit it to move it to another one">Needs a spoke</span>`
     : html`<span class="chip ember">${event.auto_start ? `Starts ${until(event.start_at)}` : 'Manual start'}</span>`;
   return html`<div class=${`event ${event.state}`}>
     <div class="when"><b>${clock(event.started_at || event.start_at)}</b>${(event.ended_at || event.end_at)
@@ -426,6 +428,7 @@ function EventRow({ event, spoke, showSpoke, onEdit, refresh }) {
         ${event.series && event.state !== 'ended' && html`<span class="chip" title=${event.detached ? 'Changed on its own' : ''}>
           <${Icon} name="repeat" size=${12} /> ${repeatLabel(event.series)}${event.detached ? ' · edited' : ''}</span>`}
         ${showSpoke && spoke && html`<a class="chip" href=${`#/spokes/${spoke.id}`}>${spoke.name}</a>`}
+        ${showSpoke && !spoke && event.spoke_name && html`<span class="chip" title="This spoke was removed from the hub">${event.spoke_name} · removed</span>`}
         ${event.targets.map((t) => html`<span class="channel small" title=${t.error || t.channel}>
           <${Avatar} channel=${t} size=${18} /> ${t.channel}
           ${t.watch_url && html`<a href=${t.watch_url} target="_blank" rel="noopener" title="Watch"><${Icon} name="external" size=${13} /></a>`}
@@ -435,7 +438,7 @@ function EventRow({ event, spoke, showSpoke, onEdit, refresh }) {
       ${errors.length > 0 && html`<p class="error small">${errors[0].channel}: ${errors[0].error}</p>`}
     </div>
     <div class="actions">
-      ${event.state === 'scheduled' && html`<button class="btn small" onClick=${start}><${Icon} name="play" size=${14} /> Start now</button>`}
+      ${event.state === 'scheduled' && !event.spoke_removed && html`<button class="btn small" onClick=${start}><${Icon} name="play" size=${14} /> Start now</button>`}
       ${event.state === 'live' && html`<button class="btn danger small" onClick=${end}><${Icon} name="stop" size=${14} /> End</button>`}
       ${event.state === 'ended' && hasCopy && html`<a class="btn small" href=${`#/edit/${event.id}`}>
         <${Icon} name="scissors" size=${14} /> ${event.edits.length ? 'Edited' : 'Edit'}</a>`}

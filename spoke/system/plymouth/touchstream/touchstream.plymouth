@@ -1,8 +1,0 @@
-[Plymouth Theme]
-Name=TouchStream
-Description=TouchStream boot splash: the TouchStream mark with a pulsing ember core, by Cinderwire
-ModuleName=script
-
-[script]
-ImageDir=/usr/share/plymouth/themes/touchstream
-ScriptFile=/usr/share/plymouth/themes/touchstream/touchstream.script

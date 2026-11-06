@@ -8,9 +8,10 @@ TouchStream becomes a system: spokes plus a hub that schedules, streams, records
   go live on their own, a recording of every broadcast filed in a folder named for it, editing, transcripts and
   captions, cleanup of old recordings, and one-command installers for Mac, Windows and Linux (plus Docker and
   Coolify).
-- **Spoke**: video to the hub over SRT, its own copy of every broadcast, a week of schedule kept so it can stream
-  straight to YouTube if the hub is down, recordings to a phone by QR code, a Wi-Fi menu, and a holding screen when
-  there's no HDMI. 1080p at 24, 25, 30 or 50 fps.
+- **Spoke**: an off-the-shelf box, the Luckfox PicoKVM, with nothing to build. Video to the hub over SRT, its own copy
+  of every broadcast uploaded as it's made, Go live, End and Record on its screen, and its recordings to a phone by QR
+  code. 1080p at 24, 25, 30, 50 or 60 fps; the hub offers each spoke only the rates it can capture. (The Raspberry Pi
+  spoke is retired; it's in the history at commit a12f6b2.)
 - **The editor**: a linear editor on tracks.
   - Video and its linked sound (unlink them for L-cuts), music, titles, and a color adjustment layer.
   - A cut tool; gaps that stay until you close them; trims and moves in place; transitions on cuts.
@@ -20,13 +21,8 @@ TouchStream becomes a system: spokes plus a hub that schedules, streams, records
 - **Shorts**: a vertical short of any moment, picked by sentence from the transcript. The framing follows the
   speaker, or shows the whole picture over a blur. Captions are burned in, in five fixed styles with the spoken word
   lit, pauses can be taken out, and it publishes to YouTube as a Short. AI agents can make them too.
-- **Flip screen** in the spoke's settings, for a spoke mounted the other way up.
-- HDMI sources that send no sound (or send it elsewhere) no longer freeze the spoke's capture.
-- **Record on the spoke**: a Record button on the touchscreen, with or without a hub, and a phone page (from the QR
-  code) to watch, trim and download a recording.
 - Fixed: the editor no longer resets your changes every few seconds.
 - Fixed: after an update, browsers sometimes kept showing the old dashboard.
-- Fixed: a spoke recording whose capture restarted mid-way (the HDMI source dropped, say) wrote over its first part.
 - The TouchStream mark, made by Cinderwire.
 
 

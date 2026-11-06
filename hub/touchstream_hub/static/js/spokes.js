@@ -121,7 +121,15 @@ function DestinationRow({ dest, live, scheduled, onEdit, refresh }) {
 
 // ---- Settings ----
 export const FRAME_RATES = [['24', '1080p24 · film look'], ['25', '1080p25 · PAL regions'],
-  ['30', '1080p30 · most common'], ['50', '1080p50 · smooth motion']];
+  ['30', '1080p30 · most common'], ['50', '1080p50 · smooth motion'], ['60', '1080p60 · smoothest motion']];
+
+/** The frame rates this spoke can capture (it says in its heartbeat); all of them until it has. */
+const ratesFor = (spoke) => {
+  const own = spoke.status && spoke.status.framerates;
+  return Array.isArray(own) && own.length ? FRAME_RATES.filter(([r]) => own.includes(r)) : FRAME_RATES;
+};
+// More motion needs more bits: 50 and 60 fps get a higher bitrate unless one is already set
+const bitsFor = (rate, kbps) => (Number(rate) >= 50 && kbps < 10000 ? 12000 : kbps);
 
 /** The source's actual rate differs from the setting (29.97 counts as 30). */
 function rateMismatch(spoke) {
@@ -132,9 +140,7 @@ function rateMismatch(spoke) {
 function SpokeSettingsModal({ spoke, onClose }) {
   const [form, setForm] = useState({ name: spoke.name, location: spoke.location, bitrate_kbps: spoke.bitrate_kbps,
     record_local: spoke.record_local, framerate: spoke.framerate });
-  // 50 fps carries more motion: give it a higher bitrate unless one is already set
-  const setRate = (rate) => setForm({ ...form, framerate: rate,
-    bitrate_kbps: rate === '50' && form.bitrate_kbps < 10000 ? 12000 : form.bitrate_kbps });
+  const setRate = (rate) => setForm({ ...form, framerate: rate, bitrate_kbps: bitsFor(rate, form.bitrate_kbps) });
   const [error, setError] = useState('');
   const [sent, setSent] = useState('');
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -145,8 +151,8 @@ function SpokeSettingsModal({ spoke, onClose }) {
   };
   const command = async (c) => { await api('POST', `/api/spokes/${spoke.id}/command`, { command: c }); setSent(c === 'update' ? 'Update sent' : 'Restart sent'); };
   const forget = async () => {
-    if (!(await confirmAction({ title: `Remove ${spoke.name}?`, message: 'It stops being part of this hub. Its recordings stay here.',
-      confirm: 'Remove spoke', danger: true }))) return;
+    if (!(await confirmAction({ title: `Remove ${spoke.name}?`, confirm: 'Remove spoke', danger: true,
+      message: 'The hub forgets this device. Its broadcasts, recordings, edits and shorts all stay here. Upcoming broadcasts stay on the schedule until you move them to another spoke.' }))) return;
     await api('DELETE', `/api/spokes/${spoke.id}`); location.hash = '#/spokes'; onClose();
   };
   return html`<${Modal} title="Spoke settings" onClose=${onClose}>
@@ -157,18 +163,15 @@ function SpokeSettingsModal({ spoke, onClose }) {
       </div>
       <div class="form-row">
         <div class="field"><span>Frame rate</span>
-          <${Select} label="Frame rate" value=${form.framerate} options=${FRAME_RATES} onChange=${setRate} /></div>
+          <${Select} label="Frame rate" value=${form.framerate} options=${ratesFor(spoke)} onChange=${setRate} /></div>
         <div class="field"><span>Quality (H.264 High)</span>
           <${Select} label="Quality" value=${form.bitrate_kbps} onChange=${(v) => setForm({ ...form, bitrate_kbps: v })}
             options=${QUALITY.map((q) => [q.kbps, `${q.label} · ${q.kbps / 1000} Mbps`, q.note])} /></div>
       </div>
       <p class="muted small" style="margin-top:-6px">The spoke asks its HDMI source for this rate. Most cameras follow
-        automatically; if yours doesn't, set its HDMI output to match (29.97 is fine for 30). 1080p60 is too fast for a Pi 4's capture link.</p>
-      <div class="check-row">
-        <div><b>Keep a copy on the spoke</b>
-          <div class="muted small">Records on the device while live and uploads it here. Nothing is lost if the internet drops.</div></div>
-        <${Switch} checked=${form.record_local} onChange=${(v) => setForm({ ...form, record_local: v })} label="Keep a copy on the spoke" />
-      </div>
+        automatically; if yours doesn't, set its HDMI output to match (29.97 is fine for 30). The list shows what this spoke
+        can capture. Live, a spoke always keeps its own copy too, and uploads it here: nothing is lost if the internet
+        drops.</p>
       ${error && html`<p class="error">${error}</p>`}
       <div class="modal-foot split">
         <span class="foot-group">
@@ -199,19 +202,15 @@ export function AllSpokesModal({ onClose }) {
   return html`<${Modal} title="Settings for all spokes" onClose=${onClose}>
     <form class="form" onSubmit=${save}>
       <p class="muted small">Saving sets these on all ${d.spokes} spoke${d.spokes === 1 ? '' : 's'}, and on spokes you add
-        later. You can still change one spoke on its own in its settings.</p>
+        later (a spoke that can't capture the frame rate keeps its own). You can still change one spoke on its own in its
+        settings.</p>
       <div class="form-row">
         <div class="field"><span>Frame rate${own('framerate')}</span>
           <${Select} label="Frame rate" value=${form.framerate} options=${FRAME_RATES} onChange=${(v) => setForm({ ...form, framerate: v,
-            bitrate_kbps: v === '50' && form.bitrate_kbps < 10000 ? 12000 : form.bitrate_kbps })} /></div>
+            bitrate_kbps: bitsFor(v, form.bitrate_kbps) })} /></div>
         <div class="field"><span>Quality${own('bitrate_kbps')}</span>
           <${Select} label="Quality" value=${form.bitrate_kbps} onChange=${(v) => setForm({ ...form, bitrate_kbps: v })}
             options=${QUALITY.map((q) => [q.kbps, `${q.label} · ${q.kbps / 1000} Mbps`, q.note])} /></div>
-      </div>
-      <div class="check-row">
-        <div><b>Keep a copy on each spoke</b>
-          <div class="muted small">Records on the device while live and uploads it here${own('record_local')}.</div></div>
-        <${Switch} checked=${form.record_local} onChange=${(v) => setForm({ ...form, record_local: v })} label="Keep a copy on each spoke" />
       </div>
       ${error && html`<p class="error">${error}</p>`}
       <div class="modal-foot"><button type="button" class="btn ghost" onClick=${onClose}>Cancel</button>

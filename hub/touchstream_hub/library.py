@@ -169,7 +169,7 @@ class Library:
         """File every complete copy of every broadcast that ended a minute or more ago."""
         now = now or time.time()
         busy = self._in_use()
-        for spoke in self.db.spokes():
+        for spoke in self.db.spokes(removed=True):   # a removed spoke's copies still get filed
             events = self.db.all("SELECT * FROM events WHERE spoke_id = ? AND state != 'scheduled'", spoke['id'])
             grouped, _ = recordings.match(events, recordings.spoke_copies(spoke['id']), now)
             for event in events:

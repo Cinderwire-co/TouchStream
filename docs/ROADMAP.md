@@ -54,14 +54,13 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 
 ## Next
 
-1. **Installers without a terminal**: a signed Mac .pkg and a Windows installer, plus a Linux systemd test on a real
-   machine.
-2. **Search across everything** (below).
-3. **Fan control on the spoke** (needs the right fan; see "Parts list"):
-   - Today the fan is wired to 5 V and runs flat out all the time; nothing can slow it.
-   - With a fan that has a control wire (or a 2-wire fan plus a small transistor) on GPIO 12 or 13 (pins 32/33, clear of the screen's header), the installer adds the `pwm-gpio-fan` overlay. The fan then stays off when cool and steps up through four speeds as the CPU warms (about 55 °C to 75 °C).
-   - The hub shows the fan's speed next to the temperature.
-   - Not undervolting or overclocking: neither changes the fan speed. At about 15% CPU and 56 °C while streaming, the Pi has plenty of headroom. Video encoding runs on its hardware encoder, and the 1080p50 limit comes from the HDMI board's camera link, so a faster CPU wouldn't help.
+1. **The TouchStream installer** for Mac and Windows, with no terminal: it installs the hub like any professional
+   installer, asks about spokes, checks you have the right box, and writes each spoke's microSD card already paired
+   with the hub. Signed and notarized for release.
+2. **The spoke on the real box** (a Luckfox PicoKVM arrives Nov 7): HDMI capture and its hardware encoder, HDMI
+   sound, the screen on the panel, ffmpeg on board, and the image the installer writes (below).
+3. **Straight to YouTube from the spoke** when the hub can't be reached (below).
+4. **Search across everything** (below).
 
 ## The agent API and the in-hub assistant
 
@@ -85,7 +84,7 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 - A recurring series makes each date's broadcast (on YouTube too) 8 days ahead; later dates are only planned. Changing the series updates every upcoming broadcast not changed on its own. Changing one date detaches it from the series. Deleting one date skips it. Ending the series deletes its upcoming broadcasts; aired ones stay.
 - Changing a title renames the broadcast's folder and files. The MP4s keep the details they were filed with.
 - A scheduled broadcast that's edited updates YouTube. Deleting one that hasn't aired removes it from YouTube.
-- Spokes keep a week of their schedule and stream straight to YouTube if the hub is down. The hub takes over again when it's back.
+- Spokes keep a week of their schedule and stream straight to YouTube if the hub is down. The hub takes over again when it's back. (Coming back in the PicoKVM spoke: see below.)
 
 ## Search across everything
 
@@ -103,38 +102,40 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 
 ## The spoke: still to come
 
-- A confidence monitor on the Pi's own HDMI port (the code is there behind `clean_feed` in the config, off by
-  default). It's a frame or two behind the source, so it's for watching, not for working a mouse; for that, use an HDMI
-  splitter in front of the spoke (see docs/spoke.md). Before it's switched on: a setting, and test it after a source
-  switch, since the display output and the hardware converter must be let go of cleanly every time.
-- Headphones on the 3.5 mm jack to hear what's being streamed (it's output only: no input).
-- A USB audio adapter as the sound source, for a feed straight from the soundboard.
-- HDMI sound without soldering. The TC358743 boards send sound over separate I2S pins, never the ribbon, and the Pi's
-  clock pin (12) sits under the 3.5" screen. Options: a board with an audio plug (JST-GH 5-pin to Dupont) plus a DSI
-  screen that leaves the GPIO free; or a USB 3.0 capture card with HDMI loop-out (sound over USB, zero-lag loop-out).
-- An off-the-shelf spoke, one box with nothing to assemble: no screen or HDMI out needed, run from the hub and a phone
-  page, at about $40. Candidates:
-  - Luckfox PicoKVM (about $38), the pick: RV1106 camera chip with a hardware H.264 encoder, 1080p60 capture,
-    microSD, Ethernet, open Buildroot SDK. Its TC358743 has I2S wired inside, but HDMI sound isn't finished in its
-    driver (a user measured the pitch 1.29× too fast, which looks like an audio clock setting we can fix with the open
-    SDK). With 256 MB, one core and 100 Mbps it needs a lean native spoke (Go or C).
-  - Over budget: the Sipeed NanoKVM Pro (about $69–119; HDMI sound, loop-out, gigabit, 1 GB) and the GL.iNet Comet
-    (about $80; HDMI sound works, vendor firmware).
-  - Not these: the original NanoKVM (SG2002) and JetKVM have no HDMI sound.
-  Whichever box, it speaks the same hub protocol: capture, encode, SRT out, segment recording, upload, and the phone
-  status/trim page. A PicoKVM is on order. Started in `lite/` (Go): the hub link, the SRT uplink, recording and
-  upload, the 240×240 screen, and recordings to phones (a list on the screen, a QR code each, the Pi's phone page to
-  watch, trim and save) work in an emulator (an ARMv7 container held to one core and 256 MB, replaying a clip as the
-  HDMI input). Still to do on the box: HDMI capture and the hardware encoder (it's sold as 1080p60, which the Pi
-  can't do: follow the hub's frame rate setting), HDMI sound, the screen on the real panel and its touch, ffmpeg on
-  the box for the phone copies, and its time zone (from the hub).
-- Wi-Fi for the PicoKVM, which only has Ethernet. Plan on a pocket travel router as its Wi-Fi: over Ethernet (no
-  software), or over one USB cable that powers the box too, with the box acting as a tethered phone (a USB network
-  gadget, NCM, which Windows, macOS and Linux all take without drivers). The same USB network also lets the box
-  borrow the network of the computer it's plugged into, and reach a hub running on it directly. On the box, also try
-  switching its USB-C port to host for a Wi-Fi stick (it's also the power input, so it may not work).
-- The PicoKVM's pin out (I2C, two serial ports, 3.3 V) can't carry network or video, but could drive a tally light or
-  a physical Record button.
+The spoke is the Luckfox PicoKVM (in `spoke/`, in Go). The Raspberry Pi spoke is retired: it's in the history at
+commit a12f6b2. The PicoKVM won on price (about $38 to $87 with its screen) and on being one box with nothing to build;
+the Sipeed NanoKVM Pro (HDMI sound, loop-out) and GL.iNet Comet were over budget, and the original NanoKVM and JetKVM
+have no HDMI sound.
+
+Working in the emulator (`spoke/tools/dev emulate`: an ARMv7 container held to the box's one core and 256 MB,
+replaying a clip as its HDMI input): the hub link and adoption, the SRT stream, recording and upload, the screen with
+Go live, End and Record, and recordings to phones by QR code. Still to come:
+
+- **On the box**: HDMI capture and the RV1106's hardware H.264 encoder, at the hub's frame rate (it's sold as
+  1080p60); the EDID that asks the source for that rate; the screen on the panel itself, and its touch; ffmpeg on
+  board, for phone copies, clips and the direct stream; its time zone, from the hub.
+- **HDMI sound.** Its TC358743 has the sound wired inside, but the driver plays it 1.29× fast (a user's measurement),
+  which looks like an audio clock setting we can fix with the open SDK.
+- **The image the installer writes**: built with Luckfox's Buildroot SDK, with the spoke, ffmpeg and a small space the
+  installer fills in with the hub's address and the spoke's credentials, so it's paired from its first boot. First
+  check on the real box that it boots from the microSD card (it has its own 8 GB eMMC); if not, the installer flashes
+  it over USB instead.
+- Straight to YouTube (done in the emulator): with no hub, from stream keys added on the setup page; with a hub that's
+  out of reach, from the schedule and keys it sends. Still to check on the box: ffmpeg's RTMPS (TLS) to YouTube, and
+  the encoder following the setup page's resolution (720p means scaling in the encoder).
+- **Wi-Fi.** It only has Ethernet. Plan on a pocket travel router as its Wi-Fi: over Ethernet (no software), or over
+  one USB cable that powers the box too, with the box acting as a tethered phone (a USB network gadget, NCM, which
+  Windows, macOS and Linux all take without drivers). The same USB network lets the box borrow the network of the
+  computer it's plugged into, and reach a hub running on it directly. Also try its USB-C port as a host for a Wi-Fi
+  stick (it's also the power input, so it may not work).
+- Recordings go on the microSD card (not the 8 GB eMMC); 48 GB free holds about 12½ hours at 8 Mbps. Recommend a
+  "high endurance" card in the parts list. (Phone trims now snap to the keyframes the recorder notes, so a clip begins
+  exactly where its handle shows.)
+- H.265 as an option for slow uploads (its encoder does both): about the same picture in 30–50% fewer bits. H.264
+  stays the default: YouTube re-encodes everything anyway, and H.265 needs enhanced RTMP to reach YouTube and plays
+  patchily in browsers (the dashboard preview, the phone page).
+- Its pin out (I2C, two serial ports, 3.3 V) can't carry network or video, but could drive a tally light or a physical
+  Record button.
 
 ## Shorts: still to come
 
@@ -146,26 +147,26 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 
 ## Later
 
-- Efficiency on the spoke: zero-copy capture to the encoder, scaling the preview in hardware, and an optional WebRTC preview with lower latency.
 - A UI pass as features land: keep four top-level places (Home, Schedule, Spokes, Settings), and keep each feature inside the broadcast or spoke it belongs to.
+- Move a whole series to another spoke (one upcoming broadcast can move today: needed when a spoke is removed, since
+  its series keeps making dates for it).
 - Series titles: the date is added in English ("November 8, 2026"); follow the hub's language once there's a setting for it.
 
 ## Launch (after testing and the build are done)
 
 - **A promo video** of TouchStream and its parts:
-  - a 3D animation of the spoke, modelled from its real parts (Pi, capture board, screen, case) and rendered in
-    Blender, which can be scripted end to end;
+  - a 3D animation of the spoke (the PicoKVM box with its screen), rendered in Blender, which can be scripted end to
+    end;
   - what it does, with animations of the dashboard;
   - the assistant and AI agents running it, the API, and YouTube.
   - Start from the product-video templates in the ops repo.
 
 ## Before release
 
-- Parts list with links, including the HDMI capture board and a fan with a control wire (see fan control above).
-- Remove the dev-only debug drop-in on the Pi (`touchstream.service.d/debug.conf`).
+- Parts list with links: the PicoKVM (with its screen), a microSD card, a power supply, and a travel router for Wi-Fi.
 - No default passwords anywhere.
-- Ship the SIL Open Font License with the Bricolage Grotesque and JetBrains Mono fonts (in `spoke/assets/fonts` and
-  `lite/internal/screen/assets`); the OFL requires it to travel with the fonts.
+- Ship the SIL Open Font License with the Bricolage Grotesque and JetBrains Mono fonts (in
+  `spoke/internal/assets/files`); the OFL requires it to travel with the fonts.
 - Make the GHCR image public.
 - Revisit the license (MIT for now; the goal is to keep the Cinderwire branding and stop rebranded forks).
-- Real-world tests: a real HDMI source and audio (including 50 fps and 29.97 sources), a real YouTube channel, and the QR download on Android and iPhone.
+- Real-world tests: a real HDMI source and audio (including 50, 60 and 29.97 fps sources), a real YouTube channel, and the QR download on Android and iPhone.

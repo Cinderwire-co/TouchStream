@@ -196,6 +196,7 @@ MIGRATIONS = [
     ('events', 'adhoc', 'INTEGER NOT NULL DEFAULT 0'),
     # 1080p frame rate the spoke asks its HDMI source for: 24 | 25 | 30 | 50
     ('spokes', 'framerate', "TEXT NOT NULL DEFAULT '30'"),
+    ('spokes', 'removed_at', 'REAL'),   # removed from the hub: its broadcasts and recordings stay
     # The broadcast's folder in the recordings folder, once something is filed there
     ('events', 'folder', 'TEXT'),
     # Where the spoke's last heartbeat came from, to tell it the hub's new address if that changes
@@ -253,8 +254,10 @@ class Database:
     def spoke(self, spoke_id):
         return _decode(self.one('SELECT * FROM spokes WHERE id = ?', spoke_id))
 
-    def spokes(self):
-        return [_decode(s) for s in self.all('SELECT * FROM spokes ORDER BY created_at')]
+    def spokes(self, removed=False):
+        """The hub's spokes; with removed=True, also ones removed from it (whose broadcasts and recordings stay)."""
+        return [_decode(s) for s in self.all('SELECT * FROM spokes WHERE ? OR removed_at IS NULL ORDER BY created_at',
+                                             int(removed))]
 
     def destinations(self, spoke_id=None):
         if spoke_id:

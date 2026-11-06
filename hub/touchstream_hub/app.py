@@ -42,7 +42,7 @@ PAIRING_MINUTES = 10
 LOOPBACK = ('127.0.0.1', '::1')
 PUBLISH_PATH = re.compile(r'^(spoke|preview)/([A-Za-z0-9]+)$')
 SCHEDULE_DAYS = 7          # how far ahead spokes keep a copy of their schedule
-FRAME_RATES = ('24', '25', '30', '50')
+FRAME_RATES = ('24', '25', '30', '50', '60')   # any spoke's; each says which it can capture (spoke_rates)
 
 
 class Hub:
@@ -220,8 +220,8 @@ def session_only(request: Request):
 def spoke_auth(request: Request):
     spoke = hub.db.spoke(request.headers.get('X-Spoke-Id', ''))
     token = request.headers.get('Authorization', '').removeprefix('Bearer ')
-    if not spoke or not secrets.compare_digest(token, spoke['token']):
-        raise HTTPException(401, 'Unknown spoke')
+    if not spoke or spoke['removed_at'] or not secrets.compare_digest(token, spoke['token']):
+        raise HTTPException(401, 'Unknown spoke')   # (a removed one drops back to unpaired)
     return spoke
 
 
@@ -415,16 +415,26 @@ def _spoke_fields(changes, fields=('name', 'location', *SPOKE_SHARED)):
             if field == 'bitrate_kbps' and not 1000 <= value <= 25000:
                 raise HTTPException(400, 'Bitrate must be 1000-25000 kbps')
             if field == 'framerate' and value not in FRAME_RATES:
-                raise HTTPException(400, 'Frame rate must be 24, 25, 30 or 50 (a Pi 4 can capture up to 1080p50)')
+                raise HTTPException(400, f"Frame rate must be one of {', '.join(FRAME_RATES)}")
             out[field] = int(value) if isinstance(value, bool) else value
     return out
 
 
+def spoke_rates(spoke):
+    """The frame rates a spoke says it can capture (in its heartbeat); all of them if it hasn't said."""
+    rates = (spoke.get('status') or {}).get('framerates')
+    return [r for r in FRAME_RATES if r in rates] if isinstance(rates, list) and rates else list(FRAME_RATES)
+
+
 @app.patch('/api/spokes/{spoke_id}', dependencies=[Depends(admin)])
 def update_spoke(spoke_id: str, changes: dict = Body()):
-    if not hub.db.spoke(spoke_id):
+    spoke = hub.db.spoke(spoke_id)
+    if not spoke:
         raise HTTPException(404)
-    for field, value in _spoke_fields(changes).items():
+    fields = _spoke_fields(changes)
+    if fields.get('framerate') and fields['framerate'] not in spoke_rates(spoke):
+        raise HTTPException(400, f"This spoke can capture 1080p at {', '.join(spoke_rates(spoke))} fps")
+    for field, value in fields.items():
         hub.db.run(f'UPDATE spokes SET {field} = ? WHERE id = ?', value, spoke_id)
     return spoke_view(hub.db.spoke(spoke_id))
 
@@ -446,7 +456,10 @@ def set_spoke_defaults(changes: dict = Body()):
     fields = _spoke_fields(changes, SPOKE_SHARED)
     hub.db.set_setting('spoke_defaults', {**(hub.db.get_setting('spoke_defaults') or {}), **fields})
     for field, value in fields.items():
-        hub.db.run(f'UPDATE spokes SET {field} = ?', value)
+        for spoke in hub.db.spokes():
+            # A spoke that can't capture this frame rate keeps its own
+            if field != 'framerate' or value in spoke_rates(spoke):
+                hub.db.run(f'UPDATE spokes SET {field} = ? WHERE id = ?', value, spoke['id'])
     return get_spoke_defaults()
 
 
@@ -459,13 +472,17 @@ def set_mode(spoke_id: str, mode: str = Body(embed=True)):
     spoke = hub.db.spoke(spoke_id)
     if not spoke:
         raise HTTPException(404)
+    change_mode(spoke, mode)
+    return spoke_view(hub.db.spoke(spoke_id))
+
+
+def change_mode(spoke, mode):
     with hub.broadcasts.lock:
-        if mode == 'live' and not hub.broadcasts.live_event(spoke_id):
+        if mode == 'live' and not hub.broadcasts.live_event(spoke['id']):
             hub.broadcasts.start_adhoc(spoke)
         elif mode != 'live' and spoke['mode'] == 'live':
-            hub.broadcasts.end_spoke(spoke_id)
-        hub.db.run('UPDATE spokes SET mode = ? WHERE id = ?', mode, spoke_id)
-    return spoke_view(hub.db.spoke(spoke_id))
+            hub.broadcasts.end_spoke(spoke['id'])
+        hub.db.run('UPDATE spokes SET mode = ? WHERE id = ?', mode, spoke['id'])
 
 
 @app.post('/api/spokes/{spoke_id}/command', dependencies=[Depends(admin)])
@@ -482,8 +499,16 @@ def send_command(spoke_id: str, command: str = Body(embed=True)):
 
 @app.delete('/api/spokes/{spoke_id}', dependencies=[Depends(admin)])
 def forget_spoke(spoke_id: str):
-    # Recordings stay on disk; the spoke drops back to unadopted on its next heartbeat
-    hub.db.run('DELETE FROM spokes WHERE id = ?', spoke_id)
+    """Remove a spoke from the hub. The device is forgotten (it drops back to unpaired on its next heartbeat),
+    but its broadcasts, recordings, edits and shorts all stay. Its upcoming broadcasts stay on the schedule,
+    marked as needing a spoke, until they're moved to another one."""
+    spoke = hub.db.spoke(spoke_id)
+    if not spoke or spoke['removed_at']:
+        raise HTTPException(404)
+    change_mode(spoke, 'off')   # ends a live broadcast
+    hub.db.run("UPDATE spokes SET removed_at = ?, mode = 'off', token = ? WHERE id = ?",
+               time.time(), secrets.token_urlsafe(24), spoke_id)
+    hub.db.run('UPDATE destinations SET enabled = 0 WHERE spoke_id = ? AND channel_id IS NULL', spoke_id)
     return {'ok': True}
 
 @app.post('/api/spokes/{spoke_id}/test_pattern', dependencies=[Depends(admin)])
@@ -553,7 +578,9 @@ def event_view(event, copies=None):
                         'watch_url': f'https://youtu.be/{bid}' if bid else None,
                         'studio_url': f'https://studio.youtube.com/video/{bid}/livestreaming' if bid else None})
     series = hub.series.get(event['series_id']) if event['series_id'] else None
+    spoke = hub.db.spoke(event['spoke_id'])
     return {**event, 'made_for_kids': bool(event['made_for_kids']), 'auto_start': bool(event['auto_start']),
+            'spoke_name': spoke['name'] if spoke else None, 'spoke_removed': bool(not spoke or spoke['removed_at']),
             'adhoc': bool(event['adhoc']), 'detached': bool(event['detached']),
             'series': hub.series.view(series) if series else None, 'targets': targets, 'recordings': copies or [],
             'edits': [edit_view(hub.editor.edit(e['id'])) for e in
@@ -609,7 +636,7 @@ def list_events(spoke_id: str = '', days: int = 90):
     rows = hub.db.all("SELECT * FROM events WHERE (? = '' OR spoke_id = ?) AND (state != 'ended' OR start_at > ?) "
                       'ORDER BY start_at', spoke_id, spoke_id, since)
     copies, other = {}, []
-    for sid in {e['spoke_id'] for e in rows} | ({spoke_id} if spoke_id else {s['id'] for s in hub.db.spokes()}):
+    for sid in {e['spoke_id'] for e in rows} | ({spoke_id} if spoke_id else {s['id'] for s in hub.db.spokes(removed=True)}):
         grouped, unmatched = hub.library.copies(sid, [e for e in rows if e['spoke_id'] == sid
                                                       and e['state'] != 'scheduled'])
         copies.update(grouped)
@@ -626,7 +653,8 @@ def create_event(data: dict = Body()):
     auto_start (go live at start_at), channel_ids (connected YouTube channels; none = record only).
     For a repeating one, POST /api/series."""
     spoke_id = str(data.get('spoke_id', ''))
-    if not hub.db.spoke(spoke_id):
+    spoke = hub.db.spoke(spoke_id)
+    if not spoke or spoke['removed_at']:
         raise HTTPException(400, 'Choose a spoke')
     fields = {**_event_fields(data), 'spoke_id': spoke_id}
     with hub.broadcasts.lock:
@@ -641,7 +669,16 @@ def update_event(event_id: int, data: dict = Body()):
     before = hub.broadcasts.event(event_id)
     if not before:
         raise HTTPException(404)
+    moving = 'spoke_id' in data and str(data['spoke_id']) != before['spoke_id']
+    if moving:
+        spoke = hub.db.spoke(str(data['spoke_id']))
+        if not spoke or spoke['removed_at']:
+            raise HTTPException(400, 'Choose a spoke')
+        if before['state'] != 'scheduled':
+            raise HTTPException(400, 'Only an upcoming broadcast can move to another spoke')
     with hub.broadcasts.lock:
+        if moving:
+            hub.broadcasts.move(event_id, spoke)
         hub.broadcasts.update(event_id, _event_fields(data, partial=True),
                               _channel_ids(data) if 'channel_ids' in data else None)
     if before['series_id']:
@@ -681,6 +718,9 @@ def start_event(event_id: int):
     event = hub.broadcasts.event(event_id)
     if not event or event['state'] != 'scheduled':
         raise HTTPException(400, 'Only a scheduled broadcast can be started')
+    spoke = hub.db.spoke(event['spoke_id'])
+    if not spoke or spoke['removed_at']:
+        raise HTTPException(400, 'Its spoke was removed: move it to another spoke first')
     if event['start_at'] > time.time():
         hub.db.run('UPDATE events SET start_at = ? WHERE id = ?', time.time(), event_id)
     hub.broadcasts.go_live(event_id)
@@ -771,7 +811,8 @@ def _series(series_id):
 def create_series(data: dict = Body()):
     """Start a recurring broadcast. With from_event, an existing broadcast becomes its first date."""
     spoke_id = str(data.get('spoke_id', ''))
-    if not hub.db.spoke(spoke_id):
+    spoke = hub.db.spoke(spoke_id)
+    if not spoke or spoke['removed_at']:
         raise HTTPException(400, 'Choose a spoke')
     fields = {**_series_fields(data), 'spoke_id': spoke_id}
     if fields['until_date'] and fields['until_date'] < fields['first_date']:
@@ -1658,6 +1699,15 @@ def spoke_schedule(spoke):
                        'targets': [target(d) for d in dests if d]})
     keyed = [target(d) for d in hub.db.destinations(spoke['id']) if not d['channel_id'] and d['enabled']]
     return {'schedule': events, 'direct_destinations': keyed}
+
+
+@app.post('/api/spoke/mode')
+def spoke_mode(mode: str = Body(embed=True), spoke: dict = Depends(spoke_auth)):
+    """The spoke's own Go live and End buttons: {"mode": "live" | "off"}, as from the dashboard."""
+    if mode not in ('live', 'off'):
+        raise HTTPException(400, 'Mode is live or off')
+    change_mode(spoke, mode)
+    return {'mode': mode}
 
 
 @app.put('/api/spoke/recordings/{session}/{name}')

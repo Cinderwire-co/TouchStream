@@ -149,6 +149,6 @@ sent anywhere.
 - **How spokes reach this hub**: the address spokes send video to, if it differs from the dashboard's.
 
 On the **Spokes** page:
-- **Settings for all** sets the frame rate, quality and local copy on every spoke at once, and on spokes you add
+- **Settings for all** sets the frame rate and quality on every spoke at once, and on spokes you add
   later.
 - Each spoke's own **Settings** can still change it on its own.

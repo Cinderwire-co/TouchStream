@@ -144,7 +144,7 @@ def _brief(e, spokes):
 
 
 def _spoke_names():
-    return {s['id']: s['name'] for s in hub_app.hub.db.spokes()}
+    return {s['id']: s['name'] for s in hub_app.hub.db.spokes(removed=True)}
 
 
 class Repeat(BaseModel):

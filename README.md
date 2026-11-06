@@ -5,7 +5,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-FE5C09?style=flat-square&labelColor=0E0E0E"></a>
   <a href="docs/hub.md"><img alt="Hub: Mac, Windows, Linux and Docker" src="https://img.shields.io/badge/hub-Mac%20·%20Windows%20·%20Linux%20·%20Docker-F2F2F3?style=flat-square&labelColor=0E0E0E"></a>
-  <a href="docs/spoke.md"><img alt="Spoke: Raspberry Pi 4" src="https://img.shields.io/badge/spoke-Raspberry%20Pi%204-F2F2F3?style=flat-square&labelColor=0E0E0E"></a>
+  <a href="docs/spoke.md"><img alt="Spoke: Luckfox PicoKVM" src="https://img.shields.io/badge/spoke-Luckfox%20PicoKVM-F2F2F3?style=flat-square&labelColor=0E0E0E"></a>
   <a href="docs/api.md"><img alt="AI agents: MCP and API" src="https://img.shields.io/badge/AI%20agents-MCP%20·%20API-FE5C09?style=flat-square&labelColor=0E0E0E"></a>
 </p>
 
@@ -17,7 +17,7 @@ TouchStream is free, open-source live streaming for churches, schools and venues
 goes out every week and the person running it isn't a broadcast engineer.
 
 It has two parts:
-- **The spoke**: a Raspberry Pi with a capture board and a small touchscreen, next to your camera.
+- **The spoke**: a small off-the-shelf box with a touchscreen, next to your camera. Nothing to build.
 - **The hub**: an app on any Mac, PC or server, which runs your schedule.
 
 ```
@@ -32,8 +32,6 @@ It has two parts:
 
 - **Broadcasts on a schedule.** Once, or repeating ("Sundays at 10", "1st and 3rd Wednesday, June to August"). The
   hub creates each YouTube broadcast with its title, description and thumbnail, goes live on time and ends on time.
-- **Never misses one.** Each spoke keeps a week of its schedule. If the hub is down, it streams straight to YouTube by
-  itself.
 - **Records everything twice.** The hub records as the video arrives, and the spoke records its own copy and uploads
   it afterwards. Each broadcast gets a folder named for it, with the video, thumbnail, captions and details.
 - **A real editor.** Video and audio tracks, cut and trim tools, gaps that stay until you close them, transitions,
@@ -45,8 +43,8 @@ It has two parts:
 - **An assistant on every page.** "Schedule our Sunday service every week at 10." "Cut the first ten minutes off
   Sunday's video." It asks before anything it can't undo. Bring your own OpenRouter key, or skip it.
 - **Works with AI agents.** An MCP server and a documented API let Claude, n8n or your own scripts run the hub.
-- **Record without a hub.** Tap Record on the spoke's touchscreen. Scan its QR code to watch, trim and download the
-  recording on your phone.
+- **Go live from the room.** The spoke's screen has Go live, End and Record. Scan a recording's QR code to watch,
+  trim and download it on your phone.
 
 <table>
   <tr>
@@ -59,8 +57,8 @@ It has two parts:
   </tr>
 </table>
 
-<p align="center"><img src="docs/images/spoke-screen.png" width="100%" alt="The spoke's touchscreen: the live picture, and its menu"></p>
-<p align="center"><sub>The spoke's touchscreen: the live picture, and its menu</sub></p>
+<p align="center"><img src="docs/images/spoke-screen.png" width="100%" alt="The spoke's screen: ready, live, its recordings, and a recording's QR code"></p>
+<p align="center"><sub>The spoke's screen: ready to go live, live, its recordings, and a QR code for your phone</sub></p>
 
 ## Get started
 
@@ -76,8 +74,8 @@ other software needed first:
 
 It starts the hub and opens the dashboard. Choose a password, and you're in.
 
-**2. Build a spoke**: a Raspberry Pi 4, an HDMI capture board and a 3.5" touchscreen. [The spoke guide](docs/spoke.md)
-has the parts and a one-line install.
+**2. Get a spoke**: a Luckfox PicoKVM and a microSD card. The TouchStream installer puts the spoke's software on the
+card, already paired with your hub. [The spoke guide](docs/spoke.md) (in development)
 
 **3. Pair it**: in the dashboard, choose **Add spoke**. Spokes on your network show up by themselves.
 
@@ -89,7 +87,7 @@ records every broadcast for you to download, edit and upload yourself.
 | | |
 |---|---|
 | [**The hub**](docs/hub.md) | Installing on a Mac, Windows, Linux, Docker or Coolify; updating; ports |
-| [**Spokes**](docs/spoke.md) | Parts, installing, the touchscreen, recordings, when the internet drops |
+| [**Spokes**](docs/spoke.md) | The box, installing, its screen, recordings to phones, Wi-Fi, when the internet drops |
 | [**YouTube**](docs/youtube.md) | Connecting your channels |
 | [**Using TouchStream**](docs/using.md) | Scheduling, going live, editing, transcripts, the assistant, settings |
 | [**AI agents and the API**](docs/api.md) | Letting Claude, n8n or a script run your hub |

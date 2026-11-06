@@ -164,9 +164,13 @@ class YouTube:
     def create_broadcast(self, channel, event, stream_id):
         data = self._call(channel, 'POST', 'liveBroadcasts', params={'part': 'snippet,status,contentDetails'},
                           json=self._broadcast_body(event, content=True))
-        self._call(channel, 'POST', 'liveBroadcasts/bind',
-                   params={'id': data['id'], 'streamId': stream_id, 'part': 'id,contentDetails'})
+        self.bind_broadcast(channel, data['id'], stream_id)
         return data['id']
+
+    def bind_broadcast(self, channel, broadcast_id, stream_id):
+        """Point a broadcast at a stream (a spoke's): its watch link stays the same."""
+        self._call(channel, 'POST', 'liveBroadcasts/bind',
+                   params={'id': broadcast_id, 'streamId': stream_id, 'part': 'id,contentDetails'})
 
     def update_broadcast(self, channel, broadcast_id, event):
         self._call(channel, 'PUT', 'liveBroadcasts', params={'part': 'snippet,status'},

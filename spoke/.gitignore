@@ -1,0 +1,5 @@
+build/
+testdata/
+.emulator/
+.emulator-hubless/
+.emulator-test/

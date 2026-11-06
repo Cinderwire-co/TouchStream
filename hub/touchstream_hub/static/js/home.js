@@ -128,12 +128,12 @@ export function HomePage() {
         ${upcoming.length ? html`<div class="mini-list">${upcoming.slice(0, 5).map((e) => html`<a class="mini" href="#/schedule">
           <span class=${`dot ${e.state === 'live' ? 'live' : ''}`}></span>
           <div class="min0 grow"><b class="ellipsis">${e.title}</b><div class="muted small">${e.state === 'live' ? 'Live now'
-            : `${dayLabel(e.start_at)} ${clock(e.start_at)}`} · ${names[e.spoke_id] || ''}</div></div>
+            : `${dayLabel(e.start_at)} ${clock(e.start_at)}`} · ${names[e.spoke_id] || e.spoke_name || ''}</div></div>
           ${e.series && html`<span class="muted" title=${repeatLabel(e.series)}><${Icon} name="repeat" size=${14} /></span>`}
         </a>`)}</div>` : html`<p class="muted small">Nothing scheduled.</p>`}</div>
       <div><div class="section-head"><h2>Recently aired</h2></div>
         ${info.recent.length ? html`<div class="mini-list">${info.recent.map((e) => html`<div class="mini">
-          <div class="min0 grow"><b class="ellipsis">${e.title}</b><div class="muted small">${dayLabel(e.start_at)} · ${names[e.spoke_id] || ''}</div></div>
+          <div class="min0 grow"><b class="ellipsis">${e.title}</b><div class="muted small">${dayLabel(e.start_at)} · ${names[e.spoke_id] || e.spoke_name || ''}</div></div>
           ${e.recordings.some((c) => c.path) && html`<a class="btn ghost small" href=${`#/edit/${e.id}`}><${Icon} name="scissors" size=${13} /> ${e.edits.length ? 'Edited' : 'Edit'}</a>`}
         </div>`)}</div>` : html`<p class="muted small">Nothing has aired yet.</p>`}</div>
     </div>
