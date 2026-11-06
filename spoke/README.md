@@ -17,6 +17,7 @@ adopts it. It's a single static Go binary, small enough for the box. See [docs/s
 | The screen on the real panel and its touch | Waiting for the box |
 | Straight to YouTube: with no hub (stream keys from the setup page), or when the hub is down | Working in the emulator |
 | The setup page (QR code on the screen): stream keys, resolution, frame rate, quality, name, hub | Working in the emulator |
+| Paired from its first start by the installer's settings on the card | Working in the emulator |
 
 ## The emulator
 

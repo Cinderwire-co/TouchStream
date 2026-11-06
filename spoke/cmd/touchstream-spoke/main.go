@@ -3,6 +3,7 @@
 // screen, puts recordings on phones, and can be found and adopted by a hub on the LAN.
 //
 //	touchstream-spoke run [-data DIR] [-source replay:clip.ts]   run the spoke
+//	                      [-card FILE]                           read the installer's settings from FILE
 //	touchstream-spoke pair HUB CODE                               pair with a hub (code from Add spoke)
 //	touchstream-spoke unpair                                      forget the hub
 //
@@ -31,6 +32,7 @@ import (
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/discovery"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/hub"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/media"
+	"github.com/Cinderwire-co/TouchStream/spoke/internal/provision"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/recorder"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/screen"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/setup"
@@ -49,6 +51,7 @@ func main() {
 	data := flags.String("data", "/userdata/touchstream", "folder for settings and recordings")
 	source := flags.String("source", "hdmi", "hdmi, or replay:FILE.ts to replay a clip (the emulator)")
 	address := flags.String("address", "", "the address (and :port) phones reach this box at (default: its own)")
+	card := flags.String("card", "", "where the installer's settings are (default: the box's card)")
 	_ = flags.Parse(args)
 
 	store, err := config.Open(*data)
@@ -60,6 +63,15 @@ func main() {
 
 	switch command {
 	case "run":
+		devices := provision.Devices
+		if *card != "" {
+			devices = []string{*card}
+		}
+		if did, perr := provision.Apply(store, devices); perr != nil {
+			log.Printf("the installer's settings on the card: %v", perr)
+		} else if did != "" {
+			log.Print(did)
+		}
 		err = run(ctx, store, *data, *source, *address)
 	case "pair":
 		if flags.NArg() != 2 {

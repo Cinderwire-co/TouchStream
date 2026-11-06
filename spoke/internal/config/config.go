@@ -26,6 +26,8 @@ type Config struct {
 	BitrateKbps int    `json:"bitrate_kbps,omitempty"`
 	// Where Go live streams with no hub, added on the setup page (the file is the spoke's alone)
 	Destinations []Destination `json:"destinations,omitempty"`
+	// The installer's settings from the card, once they're applied (provision.Apply)
+	Provisioned string `json:"provisioned,omitempty"`
 }
 
 type Destination struct {

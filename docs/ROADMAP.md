@@ -54,9 +54,10 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 
 ## Next
 
-1. **The TouchStream installer** for Mac and Windows, with no terminal: it installs the hub like any professional
-   installer, asks about spokes, checks you have the right box, and writes each spoke's microSD card already paired
-   with the hub. Signed and notarized for release.
+1. **The TouchStream installer** for Mac and Windows (`installer/`, built and tested with a disk image for a card):
+   it installs or finds the hub, asks about spokes, checks you have the right box, and writes and checks each
+   spoke's microSD card, already paired with the hub. Still to do: sign and notarize it (an Apple Developer ID and
+   a Windows code-signing certificate), and write a real card once the image exists.
 2. **The spoke on the real box** (a Luckfox PicoKVM arrives Nov 7): HDMI capture and its hardware encoder, HDMI
    sound, the screen on the panel, ffmpeg on board, and the image the installer writes (below).
 3. **Straight to YouTube from the spoke** when the hub can't be reached (below).
@@ -116,10 +117,13 @@ Go live, End and Record, and recordings to phones by QR code. Still to come:
   board, for phone copies, clips and the direct stream; its time zone, from the hub.
 - **HDMI sound.** Its TC358743 has the sound wired inside, but the driver plays it 1.29× fast (a user's measurement),
   which looks like an audio clock setting we can fix with the open SDK.
-- **The image the installer writes**: built with Luckfox's Buildroot SDK, with the spoke, ffmpeg and a small space the
-  installer fills in with the hub's address and the spoke's credentials, so it's paired from its first boot. First
-  check on the real box that it boots from the microSD card (it has its own 8 GB eMMC); if not, the installer flashes
-  it over USB instead.
+- **The image the installer writes**: built with Luckfox's Buildroot SDK, with the spoke and ffmpeg, released on
+  GitHub as `touchstream-spoke-picokvm-VERSION.img.xz` with a `.sha256` beside it. It needs a 64 KiB block for the
+  installer to fill in: at a 64 KiB boundary in the image's first 64 MiB, starting `TOUCHSTREAM-PROVISION-V1` and a
+  newline, then zeros. The installer writes the hub's address and the spoke's credentials there, and the spoke reads
+  them at its first start (`spoke/internal/provision`, from `/dev/mmcblk1` or `/dev/mmcblk0`: check which is the
+  card). First check on the real box that it boots from the microSD card (it has its own 8 GB eMMC); if not, the
+  installer flashes it over USB instead.
 - Straight to YouTube (done in the emulator): with no hub, from stream keys added on the setup page; with a hub that's
   out of reach, from the schedule and keys it sends. Still to check on the box: ffmpeg's RTMPS (TLS) to YouTube, and
   the encoder following the setup page's resolution (720p means scaling in the encoder).

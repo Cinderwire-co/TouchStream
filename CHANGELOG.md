@@ -12,6 +12,10 @@ TouchStream becomes a system: spokes plus a hub that schedules, streams, records
   of every broadcast uploaded as it's made, Go live, End and Record on its screen, and its recordings to a phone by QR
   code. 1080p at 24, 25, 30, 50 or 60 fps; the hub offers each spoke only the rates it can capture. (The Raspberry Pi
   spoke is retired; it's in the history at commit a12f6b2.)
+- **The TouchStream installer** for Mac and Windows: it installs the hub (or finds it, or one on another computer),
+  checks you have a Luckfox PicoKVM, then writes a microSD card for each spoke, paired with the hub so the box shows
+  up in the dashboard by itself. It only offers removable cards (never this computer's own disks), shows what's on
+  a card before erasing it, and reads every card back to check it.
 - **The editor**: a linear editor on tracks.
   - Video and its linked sound (unlink them for L-cuts), music, titles, and a color adjustment layer.
   - A cut tool; gaps that stay until you close them; trims and moves in place; transitions on cuts.

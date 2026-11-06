@@ -31,7 +31,7 @@ class Tokens(unittest.TestCase):
 
     def test_what_needs_admin(self):
         from touchstream_hub.app import ADMIN_ONLY
-        for path in ('/api/settings', '/api/retention', '/api/youtube/client', '/api/youtube/channels/1'):
+        for path in ('/api/settings', '/api/retention', '/api/youtube/client', '/api/youtube/channels/1', '/api/spokes'):
             self.assertTrue(ADMIN_ONLY.match(path), path)
         for path in ('/api/events', '/api/retention/preview', '/api/spokes/x/mode', '/api/edits/1/publish'):
             self.assertFalse(ADMIN_ONLY.match(path), path)

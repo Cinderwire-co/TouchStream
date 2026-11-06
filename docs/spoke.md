@@ -26,6 +26,11 @@ The TouchStream installer, for Mac and Windows, sets up the hub and then, for ea
 to a microSD card, already paired with your hub. Put the card in the box, plug in HDMI, Ethernet and power, and it
 shows up in the dashboard.
 
+You need a microSD card of 32 GB or more for each spoke (a "high endurance" card lasts longest), and a card reader if
+the computer has no SD slot. The installer only offers removable cards, never the computer's own disks, and shows
+what's on a card before it's erased. Writing a card asks for your password (on a Mac) or permission (on Windows).
+Afterwards Windows may offer to format the card: choose **Cancel**, as it's written, Windows just can't read it.
+
 Already have a hub? The installer can skip it and just make spoke cards. A spoke whose card wasn't paired (or one you
 move to another hub) shows up under **Add spoke** in the dashboard, to adopt with one click.
 

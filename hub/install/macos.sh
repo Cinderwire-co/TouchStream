@@ -12,6 +12,7 @@
 #
 #   TOUCHSTREAM_SOURCE   install the hub from a folder or URL instead of GitHub
 #   TOUCHSTREAM_PORT     dashboard port (default: 8080, or the next free one)
+#   TOUCHSTREAM_NO_OPEN  don't open the dashboard at the end (the installer app sets it)
 #
 # Copyright (c) 2025 Will Reeves and TouchStream Contributors
 # Licensed under the MIT License - see LICENSE file for details
@@ -184,4 +185,4 @@ for port in UDP:8890 TCP:1935; do
     listening "$port" && ! lsof -nP -i"$port" | grep -q mediamtx \
         && echo "  Note: something else on this Mac is using $port, which the hub needs for video."
 done
-open "http://localhost:$PORT"
+[ -n "${TOUCHSTREAM_NO_OPEN:-}" ] || open "http://localhost:$PORT"   # (the installer app carries on itself)

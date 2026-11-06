@@ -190,7 +190,7 @@ app.mount('/static', DashboardFiles(directory=STATIC), name='static')
 
 # ---- Auth helpers ----
 # What an API token needs: GETs need 'read', changes 'control', and these 'admin'
-ADMIN_ONLY = re.compile(r'^/api/(password|settings|retention$|youtube/(client|connect|channels)|recordings-folder|reveal)')
+ADMIN_ONLY = re.compile(r'^/api/(password|settings|retention$|youtube/(client|connect|channels)|recordings-folder|reveal|spokes$)')
 
 
 def signed_in(request):
@@ -387,6 +387,15 @@ def start_pairing():
     return {'code': code, 'expires_at': hub.pairing[code]}
 
 
+@app.post('/api/spokes', dependencies=[Depends(admin)])
+def make_spoke(name: str = Body(embed=True)):
+    """Register a spoke before it's switched on: the installer writes these credentials onto its card, so it's
+    paired from its first boot. (If the hub's address changes, it tells the spoke when it next sees it.)"""
+    spoke = new_spoke(name.strip() or 'TouchStream')
+    return {'spoke_id': spoke['id'], 'token': spoke['token'],
+            'hub_url': f'http://{hub_ip() or "localhost"}:{settings.HTTP_PORT}'}
+
+
 @app.post('/api/discovered/{ip}/adopt', dependencies=[Depends(admin)])
 def adopt_discovered(ip: str):
     found = next((s for s in hub.discovery.unadopted() if s['ip'] == ip), None)
@@ -505,6 +514,10 @@ def forget_spoke(spoke_id: str):
     spoke = hub.db.spoke(spoke_id)
     if not spoke or spoke['removed_at']:
         raise HTTPException(404)
+    if not spoke['last_seen'] and not hub.db.one(
+            'SELECT 1 FROM events WHERE spoke_id = ? UNION SELECT 1 FROM series WHERE spoke_id = ?', spoke_id, spoke_id):
+        hub.db.run('DELETE FROM spokes WHERE id = ?', spoke_id)   # never connected, nothing to keep
+        return {'ok': True}
     change_mode(spoke, 'off')   # ends a live broadcast
     hub.db.run("UPDATE spokes SET removed_at = ?, mode = 'off', token = ? WHERE id = ?",
                time.time(), secrets.token_urlsafe(24), spoke_id)
