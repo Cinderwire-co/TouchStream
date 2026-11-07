@@ -52,10 +52,14 @@ export function Switch({ checked, onChange, label }) {
   </label>`;
 }
 
-/** A channel's YouTube avatar, or its initial when there isn't one. */
-export const Avatar = ({ channel, size = 24 }) => channel.thumbnail || channel.channel_thumbnail
-  ? html`<img class="avatar" width=${size} height=${size} src=${channel.thumbnail || channel.channel_thumbnail} alt="" />`
-  : html`<span class="avatar" style=${`width:${size}px;height:${size}px`}>${(channel.title || channel.channel || '?')[0]}</span>`;
+/** A channel's YouTube avatar (through the hub), or its initial when there isn't one, or it won't load. */
+export function Avatar({ channel, size = 24 }) {
+  const src = channel.thumbnail || channel.channel_thumbnail;
+  const [failed, setFailed] = useState(false);
+  return src && !failed
+    ? html`<img class="avatar" width=${size} height=${size} src=${src} alt="" onError=${() => setFailed(true)} />`
+    : html`<span class="avatar" style=${`width:${size}px;height:${size}px`}>${(channel.title || channel.channel || '?')[0]}</span>`;
+}
 
 export function Modal({ title, onClose, wide, children }) {
   useEffect(() => {

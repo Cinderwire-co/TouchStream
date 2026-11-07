@@ -1,5 +1,6 @@
 """TouchStream Hub web app: dashboard API, spoke API and the MediaMTX auth hook"""
 import asyncio
+import hashlib
 import io
 import ipaddress
 import json
@@ -541,8 +542,35 @@ def set_test_pattern(spoke_id: str, on: bool = Body(embed=True)):
 
 # ---- YouTube ----
 def channel_list():
-    return [{'id': c['id'], 'channel_id': c['channel_id'], 'title': c['title'], 'thumbnail': c['thumbnail'],
+    return [{'id': c['id'], 'channel_id': c['channel_id'], 'title': c['title'], 'thumbnail': channel_picture_url(c),
              'error': c['error']} for c in hub.db.all('SELECT * FROM youtube_channels ORDER BY created_at')]
+
+
+def channel_picture_url(channel, row_id=None):
+    """Where the dashboard gets a channel's picture: from the hub (channel_picture), not from YouTube."""
+    return f"/api/youtube/channels/{row_id or channel['id']}/picture" if channel['thumbnail'] else ''
+
+
+@app.get('/api/youtube/channels/{channel_row}/picture', dependencies=[Depends(admin)])
+def channel_picture(channel_row: int):
+    """A channel's YouTube picture, kept by the hub. Google's image servers can refuse it to a page on another
+    site (the dashboard: a broken image), and this way the dashboard never calls Google. Kept under a name from
+    its address, so a new picture is fetched anew."""
+    row = hub.db.one('SELECT thumbnail FROM youtube_channels WHERE id = ?', channel_row)
+    if not row or not row['thumbnail']:
+        raise HTTPException(404)
+    path = settings.DATA_DIR / 'channels' / (hashlib.sha256(row['thumbnail'].encode()).hexdigest()[:24] + '.img')
+    if not path.exists():
+        try:
+            resp = httpx.get(row['thumbnail'], timeout=10, follow_redirects=True)
+            resp.raise_for_status()
+        except httpx.HTTPError:
+            raise HTTPException(404, "YouTube didn't give the channel's picture")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(resp.content)
+    data = path.read_bytes()
+    kind = 'image/png' if data[:4] == b'\x89PNG' else 'image/webp' if data[8:12] == b'WEBP' else 'image/jpeg'
+    return Response(data, media_type=kind, headers={'Cache-Control': 'private, max-age=86400'})
 
 
 @app.get('/api/youtube', dependencies=[Depends(admin)])
@@ -595,7 +623,8 @@ def event_view(event, copies=None):
         bid = t['broadcast_id']
         targets.append({'channel_id': t['channel_id'], 'channel': t['channel_title'],
                         'destination_id': t['destination_id'],
-                        'channel_thumbnail': t['channel_thumbnail'], 'broadcast_id': bid, 'error': t['error'],
+                        'channel_thumbnail': channel_picture_url({'thumbnail': t['channel_thumbnail']}, t['channel_id']),
+                        'broadcast_id': bid, 'error': t['error'],
                         'watch_url': f'https://youtu.be/{bid}' if bid else None,
                         'studio_url': f'https://studio.youtube.com/video/{bid}/livestreaming' if bid else None})
     series = hub.series.get(event['series_id']) if event['series_id'] else None
