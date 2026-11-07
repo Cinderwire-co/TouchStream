@@ -89,8 +89,10 @@ The spoke takes the place of all four apps: one Go program, plus a small capture
   start script runs `touchstream-spoke install`: the card's partitions go onto the eMMC at the same places, each
   checked (the eMMC's own idblock and U-Boot stay: the card's are from Luckfox's image for the Lite, which has no
   eMMC); the eMMC's data partition is made afresh with the spoke's settings (its pairing); then the eMMC's
-  environment (`mmcblk0`), last. The card's idblock is replaced with `TOUCHSTREAM-INSTALLED`, and the box starts
-  again, from the eMMC, whose start script makes that card one for recordings (`touchstream-spoke card`: one exFAT
+  environment (`mmcblk0`), last. Then everything on the card a boot loader could start from is cleared (its
+  environment, U-Boot, and its boot partitions' start), its idblock replaced with `TOUCHSTREAM-INSTALLED`, and the
+  box starts again, from the eMMC. (Not the idblock alone: the eMMC's own first stage loads U-Boot from a card before
+  the eMMC, so the box started the card's U-Boot, and installed again, round and round.) The eMMC whose start script makes that card one for recordings (`touchstream-spoke card`: one exFAT
   partition from 16 MiB, "TouchStream") and mounts it over `recordings`. Other cards are left as they are (one
   that's exFAT or FAT already is used as it is). `install -keep-card` leaves the card able to start the box, to try
   the eMMC with it out; `/userdata/touchstream/stay-on-card` on a card keeps it running from the card.
@@ -132,8 +134,9 @@ box's own ffmpeg 4.4:
    shape is rasterized over only its own box, letters are kept once shaped, the panel's pixels are packed row by
    row, and it draws 4 times a second while nothing on it moves (20 while something does, and at once on a touch).
    (Found with Go's profiler: `go build -tags pprof` serves it on port 6060.)
-6. **Installed on the eMMC** from the card (`install -keep-card`, 2026-11-07): the eMMC's environment and data
-   partition checked; starting from it with the card out, next. Luckfox's factory eMMC is backed up in
+6. **Installed on the eMMC** from the card (2026-11-07): it starts from the eMMC, with its own factory U-Boot
+   (`uboot-03/09/2026`) and the card's kernel and system, pairs with the hub as the card did, and makes the
+   installer's card an exFAT card for recordings, mounted over `recordings`. Luckfox's factory eMMC is backed up in
    `.dev/backup/picokvm-emmc-factory` (its first 1347 MiB, MD5-checked against the box, and its data partition's
    files).
 7. **Still to check**: touch at each corner, RTMPS straight to YouTube, the HDMI input's 1080p30 and other rates,

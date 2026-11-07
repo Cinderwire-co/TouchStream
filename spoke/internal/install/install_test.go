@@ -103,6 +103,26 @@ func TestTheSystemGoesOntoTheEMMCAndTheCardStepsAside(t *testing.T) {
 	if !bytes.HasPrefix(idblock, []byte(Installed)) || bytes.Count(idblock, []byte{0}) != len(idblock)-len(Installed) {
 		t.Error("the card's idblock isn't replaced with the mark")
 	}
+	for name, n := range Unbootable { // nothing left on the card to start the box from
+		if name == "idblock" {
+			continue
+		}
+		r := region(t, card, parts[name])
+		if n > 0 && n < int64(len(r)) {
+			if !bytes.Equal(r[n:], before[name][n:]) {
+				t.Errorf("%s was cleared past its start", name)
+			}
+			r = r[:n]
+		}
+		if bytes.Count(r, []byte{0}) != len(r) {
+			t.Errorf("the card's %s isn't cleared", name)
+		}
+	}
+	for _, name := range []string{"system_a", "system_b"} {
+		if !bytes.Equal(region(t, card, parts[name]), before[name]) {
+			t.Errorf("the card's %s changed (it's running from it)", name)
+		}
+	}
 	if strings.Join(*did, ",") != "still,data /userdata/touchstream,released" {
 		t.Errorf("did %q", *did)
 	}

@@ -4,8 +4,9 @@
 //  1. ToEMMC, started from the card: the card's partitions go onto the eMMC at the same places,
 //     each checked; the eMMC's data partition is made afresh, with the spoke's settings (its
 //     pairing) from the card's; then the eMMC's environment (its partition table, for mmcblk0),
-//     last: until then, a power cut leaves the card as the one that starts, to start over. Then the
-//     card's idblock is replaced with Installed, so the box starts from the eMMC, and it restarts.
+//     last: until then, a power cut leaves the card as the one that starts, to start over. Then
+//     nothing on the card can start the box (Unbootable), and its idblock says Installed; the box
+//     restarts, from the eMMC.
 //  2. Recordings, started from the eMMC: a card marked Installed becomes one exFAT partition,
 //     "TouchStream". Any other card is left as it is.
 //
@@ -148,13 +149,39 @@ func ToEMMC(card, emmc, settings string, o Options, say func(string)) error {
 	if o.KeepCard {
 		return nil
 	}
-	// The card won't start the box again: the eMMC does, and it makes the card one for recordings
-	idblock := make([]byte, parts["idblock"].Size)
-	copy(idblock, Installed)
-	if _, err := c.WriteAt(idblock, idblockAt); err != nil {
+	if err := unbootable(c, parts); err != nil {
 		return err
 	}
 	return c.Sync()
+}
+
+// Unbootable is what's cleared on the card once the spoke's on the eMMC: all a boot loader could
+// start the box from. Not only the idblock, which the boot ROM looks for: the eMMC's own first
+// stage loads U-Boot from a card before the eMMC, and a U-Boot could find a kernel on it too.
+// (Whole, but for the boot partitions: their start, where their FIT's header is.)
+var Unbootable = map[string]int64{"env": 0, "idblock": 0, "uboot_a": 0, "uboot_b": 0, "misc": 0, "security": 0,
+	"boot_a": 1 << 20, "boot_b": 1 << 20}
+
+// unbootable clears Unbootable on the card, and marks its idblock Installed, for the eMMC to make
+// it a card for recordings.
+func unbootable(c *os.File, parts map[string]part) error {
+	for name, n := range Unbootable {
+		p, ok := parts[name]
+		if !ok {
+			continue
+		}
+		if n == 0 || n > p.Size {
+			n = p.Size
+		}
+		clear := make([]byte, n)
+		if name == "idblock" {
+			copy(clear, Installed)
+		}
+		if _, err := c.WriteAt(clear, p.At); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Recordings makes a card marked Installed one for recordings: one exFAT partition, from 16 MiB.
