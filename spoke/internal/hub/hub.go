@@ -48,6 +48,7 @@ type Desired struct {
 	Stream      *Stream  `json:"stream"`
 	Commands    []string `json:"commands"`
 	Framerate   string   `json:"framerate"`
+	TimeZone    string   `json:"time_zone"` // "": where the spoke finds itself to be
 	direct.Plan
 }
 

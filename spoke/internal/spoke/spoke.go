@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Cinderwire-co/TouchStream/spoke/internal/clock"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/config"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/direct"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/hub"
@@ -59,6 +60,37 @@ const (
 	problemFor = 6 * time.Second
 )
 
+// FindZone looks up where the box is on the internet, for its time zone: until it's found, every
+// minute, then once a day (it can be moved). The hub's choice comes first, if it's made one.
+func (s *Spoke) FindZone(ctx context.Context) {
+	s.useZone()
+	for {
+		wait := time.Minute
+		if zone, err := clock.Lookup(ctx); err == nil {
+			if zone != s.Store.Get().FoundZone {
+				_ = s.Store.Update(func(c *config.Config) { c.FoundZone = zone })
+				log.Printf("Its time zone, from where it is: %s", zone)
+				s.useZone()
+			}
+			wait = 24 * time.Hour
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+	}
+}
+
+// useZone makes the spoke's time its time zone's.
+func (s *Spoke) useZone() {
+	if zone := s.Store.Get().Zone(); zone != "" && zone != time.Local.String() {
+		if err := clock.Zone(zone); err != nil {
+			log.Printf("Time zone %s: %v", zone, err)
+		}
+	}
+}
+
 // ErrNoKeys: Go live with no hub needs a stream key, added on the setup page.
 var ErrNoKeys = errors.New("add a stream key first")
 
@@ -82,6 +114,10 @@ func (s *Spoke) Apply(d *hub.Desired) {
 		if d.Name != c.DeviceName || d.Location != c.Location {
 			_ = s.Store.Update(func(c *config.Config) { c.DeviceName, c.Location = d.Name, d.Location })
 		}
+	}
+	if c := s.Store.Get(); d.TimeZone != c.TimeZone && (d.TimeZone == "" || clock.Valid(d.TimeZone)) {
+		_ = s.Store.Update(func(c *config.Config) { c.TimeZone = d.TimeZone })
+		s.useZone()
 	}
 	if d.Framerate != "" && d.Framerate != s.Store.Get().Framerate {
 		// On the box this also tells the HDMI source which rate to send (still to come)
@@ -315,6 +351,8 @@ func (s *Spoke) Status() map[string]any {
 		"recording": s.Recorder.Recording(), "uploading": nilIfEmpty(s.Uploader.Status()),
 		"direct": s.Direct.Active(), "direct_state": s.Direct.State(), "storage": s.Uploader.Storage(), "speed": nil,
 		"memory_mb": memoryMB(),
+		"time_zone": nilIfEmpty(s.Store.Get().Zone()), "time_zone_found": nilIfEmpty(s.Store.Get().FoundZone),
+		"clock_set": clock.Set(),
 	}
 	if sig.Present {
 		label := strconv.FormatFloat(sig.FPS, 'f', 2, 64)

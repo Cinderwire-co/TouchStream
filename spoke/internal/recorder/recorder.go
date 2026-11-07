@@ -12,6 +12,7 @@
 package recorder
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Cinderwire-co/TouchStream/spoke/internal/clock"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/ts"
 )
 
@@ -46,6 +48,8 @@ type Recorder struct {
 
 // Start begins a session (if one isn't already running) and returns its folder.
 func (r *Recorder) Start() (string, error) {
+	// Its name is when it started: just after the box starts, its clock may not be set yet (2021)
+	clock.WaitSet(context.Background(), 15*time.Second)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.stopping != nil {

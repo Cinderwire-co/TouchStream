@@ -9,6 +9,7 @@ import secrets
 import shutil
 import threading
 import time
+import zoneinfo
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -329,7 +330,7 @@ def spoke_view(spoke):
     return {
         'id': spoke['id'], 'name': spoke['name'], 'location': spoke['location'], 'mode': spoke['mode'],
         'bitrate_kbps': spoke['bitrate_kbps'], 'record_local': spoke['record_local'],
-        'test_pattern': spoke['test_pattern'], 'framerate': spoke['framerate'],
+        'test_pattern': spoke['test_pattern'], 'framerate': spoke['framerate'], 'time_zone': spoke['time_zone'],
         'online': bool(spoke['last_seen'] and time.time() - spoke['last_seen'] < ONLINE_FOR),
         'last_seen': spoke['last_seen'], 'status': spoke['status'],
         'receiving': hub.mtx.ready(path) if spoke['mode'] != 'off' else False,
@@ -420,8 +421,8 @@ def adopt_discovered(ip: str):
 SPOKE_SHARED = ('framerate', 'bitrate_kbps', 'record_local')   # what "settings for all spokes" sets
 
 
-def _spoke_fields(changes, fields=('name', 'location', *SPOKE_SHARED)):
-    casts = {'name': str, 'location': str, 'bitrate_kbps': int, 'record_local': bool, 'framerate': str}
+def _spoke_fields(changes, fields=('name', 'location', 'time_zone', *SPOKE_SHARED)):
+    casts = {'name': str, 'location': str, 'bitrate_kbps': int, 'record_local': bool, 'framerate': str, 'time_zone': str}
     out = {}
     for field in fields:
         if field in changes:
@@ -430,6 +431,8 @@ def _spoke_fields(changes, fields=('name', 'location', *SPOKE_SHARED)):
                 raise HTTPException(400, 'Bitrate must be 1000-25000 kbps')
             if field == 'framerate' and value not in FRAME_RATES:
                 raise HTTPException(400, f"Frame rate must be one of {', '.join(FRAME_RATES)}")
+            if field == 'time_zone' and value and value not in zoneinfo.available_timezones():
+                raise HTTPException(400, f'{value} isn\'t a time zone (one like America/Chicago, or none: automatic)')
             out[field] = int(value) if isinstance(value, bool) else value
     return out
 
@@ -1775,7 +1778,7 @@ def heartbeat(request: Request, status: dict = Body(), spoke: dict = Depends(spo
             'test_pattern': spoke['test_pattern'], 'test_pattern_at': spoke['test_pattern_at'],
             # For running on its own if the hub goes down
             'bitrate_kbps': spoke['bitrate_kbps'], 'record_local_pref': spoke['record_local'],
-            'framerate': spoke['framerate'],
+            'framerate': spoke['framerate'], 'time_zone': spoke['time_zone'],
             **spoke_schedule(spoke)}
 
 

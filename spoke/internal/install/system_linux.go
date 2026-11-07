@@ -13,7 +13,8 @@ import (
 )
 
 // makeDataPartition makes the eMMC's data partition afresh (an ext4 from at to its end: the old one
-// was Luckfox's, at another place), with the spoke's settings from the card's (all but recordings).
+// was Luckfox's, at another place), with the spoke's settings from the card's (all but recordings,
+// and the stay-on-card switch), and the box's network address.
 func makeDataPartition(emmc string, at int64, settings string) error {
 	out, err := exec.Command("losetup", "-f").Output()
 	if err != nil {
@@ -45,13 +46,25 @@ func makeDataPartition(emmc string, at int64, settings string) error {
 		return err
 	}
 	for _, d := range entries {
-		if d.Name() != "recordings" {
+		if d.Name() != "recordings" && d.Name() != "stay-on-card" {
 			if err := run("cp", "-a", filepath.Join(settings, d.Name()), dst); err != nil {
 				return err
 			}
 		}
 	}
+	// Its network address too (Luckfox's start script makes one up the first time, and keeps it here),
+	// so the box keeps its address on the network, installed
+	if mac := filepath.Join(filepath.Dir(settings), "ethaddr.txt"); fileExists(mac) {
+		if err := run("cp", mac, dir); err != nil {
+			return err
+		}
+	}
 	return os.WriteFile(filepath.Join(dst, ".grown"), nil, 0o644) // (made at its full size already)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func rereadPartitions(f *os.File) error {

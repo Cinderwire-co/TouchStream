@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -21,6 +22,8 @@ type Config struct {
 	SpokeID    string `json:"spoke_id,omitempty"`
 	HubToken   string `json:"hub_token,omitempty"`
 	Framerate  string `json:"framerate,omitempty"`
+	TimeZone   string `json:"time_zone,omitempty"`  // set in the hub; none: FoundZone
+	FoundZone  string `json:"found_zone,omitempty"` // where the box is, looked up on the internet
 	// The stream with no hub, set on the setup page (with a hub, the hub's settings for it apply)
 	Resolution  string `json:"resolution,omitempty"` // 1080p or 720p
 	BitrateKbps int    `json:"bitrate_kbps,omitempty"`
@@ -47,18 +50,43 @@ type Store struct {
 	mtime time.Time
 }
 
-// Open reads <dir>/config.json, or starts one named after the host.
+// Zone is the spoke's time zone: the hub's choice, or where it found itself to be ("": not known yet).
+func (c Config) Zone() string {
+	if c.TimeZone != "" {
+		return c.TimeZone
+	}
+	return c.FoundZone
+}
+
+// Open reads <dir>/config.json, or starts one with a name of its own (DefaultName).
 func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
 	s := &Store{path: filepath.Join(dir, "config.json")}
 	if err := s.load(); errors.Is(err, fs.ErrNotExist) {
-		s.cfg.DeviceName, _ = os.Hostname()
+		s.cfg.DeviceName = DefaultName()
 	} else if err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+// DefaultName is a spoke's name until it's given one: "Spoke" and the last four of its chip's serial
+// number, so that two new ones can be told apart (and a box keeps it, installed again); off the box,
+// the host's name.
+func DefaultName() string {
+	if data, err := os.ReadFile("/proc/cpuinfo"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if k, v, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(k) == "Serial" {
+				if v = strings.ToUpper(strings.TrimSpace(v)); len(v) >= 4 && strings.Trim(v, "0") != "" {
+					return "Spoke " + v[len(v)-4:]
+				}
+			}
+		}
+	}
+	name, _ := os.Hostname()
+	return name
 }
 
 func (s *Store) load() error {

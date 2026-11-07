@@ -140,9 +140,37 @@ function rateMismatch(spoke) {
   return spoke.online && fps && Math.abs(fps - Number(spoke.framerate)) > 0.1 && !(spoke.framerate === '30' && Math.abs(fps - 29.97) < 0.05);
 }
 
+/** Common time zones, for a spoke that's somewhere its internet connection doesn't say (behind a VPN, say). */
+const TIME_ZONES = [
+  ['America/New_York', 'Eastern (New York)'], ['America/Chicago', 'Central (Chicago)'], ['America/Denver', 'Mountain (Denver)'],
+  ['America/Phoenix', 'Arizona (Phoenix)'], ['America/Los_Angeles', 'Pacific (Los Angeles)'], ['America/Anchorage', 'Alaska'],
+  ['Pacific/Honolulu', 'Hawaii'], ['America/Puerto_Rico', 'Puerto Rico'], ['America/Halifax', 'Atlantic (Halifax)'],
+  ['America/St_Johns', 'Newfoundland'], ['America/Toronto', 'Toronto'], ['America/Vancouver', 'Vancouver'],
+  ['America/Mexico_City', 'Mexico City'], ['America/Bogota', 'Bogotá'], ['America/Lima', 'Lima'], ['America/Sao_Paulo', 'São Paulo'],
+  ['America/Argentina/Buenos_Aires', 'Buenos Aires'], ['America/Santiago', 'Santiago'], ['Europe/London', 'London'],
+  ['Europe/Dublin', 'Dublin'], ['Europe/Lisbon', 'Lisbon'], ['Europe/Paris', 'Paris'], ['Europe/Berlin', 'Berlin'], ['Europe/Madrid', 'Madrid'],
+  ['Europe/Rome', 'Rome'], ['Europe/Amsterdam', 'Amsterdam'], ['Europe/Stockholm', 'Stockholm'], ['Europe/Warsaw', 'Warsaw'],
+  ['Europe/Athens', 'Athens'], ['Europe/Kyiv', 'Kyiv'], ['Europe/Istanbul', 'Istanbul'], ['Europe/Moscow', 'Moscow'],
+  ['Africa/Lagos', 'Lagos'], ['Africa/Cairo', 'Cairo'], ['Africa/Nairobi', 'Nairobi'], ['Africa/Johannesburg', 'Johannesburg'],
+  ['Asia/Dubai', 'Dubai'], ['Asia/Karachi', 'Karachi'], ['Asia/Kolkata', 'India'], ['Asia/Dhaka', 'Dhaka'], ['Asia/Bangkok', 'Bangkok'],
+  ['Asia/Jakarta', 'Jakarta'], ['Asia/Singapore', 'Singapore'], ['Asia/Manila', 'Manila'], ['Asia/Hong_Kong', 'Hong Kong'],
+  ['Asia/Shanghai', 'China'], ['Asia/Seoul', 'Seoul'], ['Asia/Tokyo', 'Tokyo'], ['Australia/Perth', 'Perth'],
+  ['Australia/Adelaide', 'Adelaide'], ['Australia/Brisbane', 'Brisbane'], ['Australia/Sydney', 'Sydney'], ['Pacific/Auckland', 'Auckland'],
+];
+
+/** Automatic first (where the spoke found itself to be), then the common ones, and the one it's set to if it's another. */
+function zonesFor(spoke, chosen) {
+  const found = spoke.status && spoke.status.time_zone_found;
+  const label = (z) => (TIME_ZONES.find((t) => t[0] === z) || [z, z.replace(/_/g, ' ')])[1];
+  const auto = found ? ['', `Automatic: ${label(found)}`, 'Where its internet connection is']
+    : ['', 'Automatic', 'It looks up where it is once it\'s online'];
+  const own = chosen && !TIME_ZONES.some((t) => t[0] === chosen) ? [[chosen, label(chosen)]] : [];
+  return [auto, ...own, ...TIME_ZONES];
+}
+
 function SpokeSettingsModal({ spoke, onClose }) {
   const [form, setForm] = useState({ name: spoke.name, location: spoke.location, bitrate_kbps: spoke.bitrate_kbps,
-    record_local: spoke.record_local, framerate: spoke.framerate });
+    record_local: spoke.record_local, framerate: spoke.framerate, time_zone: spoke.time_zone || '' });
   const setRate = (rate) => setForm({ ...form, framerate: rate, bitrate_kbps: bitsFor(rate, form.bitrate_kbps) });
   const [error, setError] = useState('');
   const [sent, setSent] = useState('');
@@ -163,6 +191,11 @@ function SpokeSettingsModal({ spoke, onClose }) {
       <div class="form-row">
         <label class="field"><span>Name</span><input type="text" value=${form.name} onInput=${set('name')} /></label>
         <label class="field"><span>Location</span><input type="text" placeholder="Main sanctuary" value=${form.location} onInput=${set('location')} /></label>
+      </div>
+      <div class="form-row">
+        <div class="field"><span>Time zone</span>
+          <${Select} label="Time zone" value=${form.time_zone} options=${zonesFor(spoke, form.time_zone)}
+            onChange=${(v) => setForm({ ...form, time_zone: v })} /></div>
       </div>
       <div class="form-row">
         <div class="field"><span>Frame rate</span>

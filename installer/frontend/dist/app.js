@@ -371,7 +371,7 @@ function done() {
       : h('p', { class: 'lead' }, 'Run the installer again whenever you’re adding spokes.'),
     spokes.length > 0 && h('div', { class: 'summary' }, spokes.map((s) => h('div', { class: 'row' }, h('span', { class: 'ok' }, '✓'),
       h('b', { class: 'grow' }, s.name), h('span', { class: 'muted small' }, s.paired ? 'paired with the hub' : 'adopt it in the dashboard')))),
-    h('div', { class: 'actions' }, state.hubURL && h('button', { class: 'primary', onclick: () => api.OpenURL(state.hubURL) }, 'Open the dashboard'),
+    h('div', { class: 'actions' }, state.hubURL && h('button', { class: 'primary', onclick: async () => { await api.OpenURL(state.hubURL); window.runtime.Quit(); } }, 'Open the dashboard'),
       h('button', { onclick: () => window.runtime.Quit() }, 'Close')));
 }
 

@@ -172,6 +172,7 @@ func run(ctx context.Context, store *config.Store, data, source, address string,
 	go s.Uploader.Run(ctx)
 	go s.Link.Run(ctx)
 	go keepGoing(ctx, "Beacon", func(ctx context.Context) error { return discovery.Beacon(ctx, store) })
+	go s.FindZone(ctx)
 
 	mux := http.NewServeMux()
 	discovery.Routes(mux, store, spoke.Version)
@@ -197,6 +198,8 @@ func run(ctx context.Context, store *config.Store, data, source, address string,
 		Share: func(name string) string {
 			return fmt.Sprintf("http://%s/r/%s", addr(), shares.Link(name))
 		},
+		Restart: func() { restartBox("the BOOT button") },
+		Reset:   func() { backToSetup(store) },
 	}
 	settings.Saved = panel.Saved
 	screen.Routes(mux, panel)
@@ -211,6 +214,23 @@ func run(ctx context.Context, store *config.Store, data, source, address string,
 		t := &lcd.Touch{Path: touch, Rotate180: true, Size: screen.Size, Down: woke(panel.Down), Move: woke(panel.Move), Up: woke(panel.Up)}
 		go keepGoing(ctx, "Touch", t.Run)
 	}
+	if button := lcd.Input(lcd.BootButton); button != "" {
+		k := &lcd.Key{Path: button, Code: lcd.KeyBoot, Press: func(down bool) { panel.Button(down); display.Wake() }}
+		go keepGoing(ctx, "The BOOT button", k.Run)
+	}
+	// Started well: the A/B slot it started from is marked so, or U-Boot would start the other in time
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-time.After(30 * time.Second):
+			cmdline, _ := os.ReadFile("/proc/cmdline")
+			if did, err := install.MarkGood(install.Misc, string(cmdline)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				log.Printf("Marking this start good: %v", err)
+			} else if did {
+				log.Print("This start's marked good")
+			}
+		}
+	}()
 	if replay != nil {
 		emulatorRoutes(mux, replay, store, panel)
 	}
@@ -249,6 +269,28 @@ func emulatorRoutes(mux *http.ServeMux, replay *media.Replay, store *config.Stor
 
 // keepGoing runs fn, and again 2 s after it stops (a device's driver reset, say), until ctx ends;
 // it says why only when the reason changes.
+// restartBox starts the box again.
+func restartBox(why string) {
+	log.Printf("Restarting (%s)", why)
+	if out, err := exec.Command("reboot").CombinedOutput(); err != nil {
+		log.Printf("Restarting: %v %s", err, out)
+	}
+}
+
+// backToSetup forgets the hub and the spoke's settings (its recordings stay), and starts it again:
+// it's as it came, with its own name, to pair or set up anew.
+func backToSetup(store *config.Store) {
+	err := store.Update(func(c *config.Config) {
+		*c = config.Config{DeviceName: config.DefaultName(), FoundZone: c.FoundZone,
+			Provisioned: c.Provisioned} // (a card's settings, once taken, aren't taken again)
+	})
+	if err != nil {
+		log.Printf("Back to setup: %v", err)
+		return
+	}
+	restartBox("back to setup")
+}
+
 func keepGoing(ctx context.Context, what string, fn func(context.Context) error) {
 	var said string
 	for ctx.Err() == nil {

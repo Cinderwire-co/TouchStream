@@ -213,6 +213,8 @@ MIGRATIONS = [
     ('events', 'folder', 'TEXT'),
     # Where the spoke's last heartbeat came from, to tell it the hub's new address if that changes
     ('spokes', 'last_ip', 'TEXT'),
+    # The spoke's time zone (an IANA name); '' for where it finds itself to be, on the internet
+    ('spokes', 'time_zone', "TEXT NOT NULL DEFAULT ''"),
     # Recurring broadcasts: the series a broadcast belongs to, its date in it, and whether it
     # was changed on its own (then changes to the series leave it alone)
     ('events', 'series_id', 'INTEGER REFERENCES series(id) ON DELETE SET NULL'),

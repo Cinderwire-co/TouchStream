@@ -58,6 +58,8 @@ type Screen struct {
 	Sessions func() []recorder.Session          // the recordings on the card
 	Share    func(name string) string           // a link to a recording's phone page
 	Prepared func(name string) (string, string) // how its phone copy is coming along
+	Restart  func()                             // the box starts again (the BOOT button)
+	Reset    func()                             // back to setup: forgets the hub and settings, and starts again
 
 	mu      sync.Mutex
 	armed   time.Time // a first tap on Stop, waiting for the second
@@ -71,6 +73,8 @@ type Screen struct {
 	chosen  recorder.Session // the recording whose QR code is showing
 	link    string           // the QR code showing: a recording's, or setup's
 	touched time.Time
+	asking  question  // the BOOT button's question, in the ask view
+	pressed time.Time // the BOOT button, down since
 }
 
 type view int
@@ -80,6 +84,7 @@ const (
 	list        // the recordings on the card
 	detail      // one recording's QR code
 	setup       // the setup page's QR code
+	ask         // the BOOT button's question: restart, or back to setup
 )
 
 // A finger on the screen: where it went down, and whether it has moved enough to be a drag.
@@ -158,6 +163,8 @@ func (s *Screen) tap(x, y int) {
 		if inBack(x, y) {
 			s.show(home)
 		}
+	case ask:
+		s.tapAsk(x, y)
 	}
 }
 
@@ -338,14 +345,20 @@ func (s *Screen) Render(now time.Time) *image.RGBA {
 	drawing.Lock()
 	defer drawing.Unlock()
 	s.mu.Lock()
-	if s.view != home && now.Sub(s.touched) > idleFor {
+	if s.view != home && now.Sub(s.touched) > idleFor && s.pressed.IsZero() {
 		s.view, s.scroll = home, 0
 	}
-	v := s.view
+	held := s.held(now)
+	v, q := s.view, s.asking
 	s.mu.Unlock()
 	img := image.NewRGBA(image.Rect(0, 0, Size, Size))
 	draw.Draw(img, img.Bounds(), image.NewUniform(ink), image.Point{}, draw.Src)
+	if held >= holdShown && held < holdFor { // the BOOT button held: counting down to setup
+		v = ask
+	}
 	switch v {
+	case ask:
+		s.renderAsk(img, s.State(), q, held)
 	case list:
 		s.renderList(img, now)
 	case detail:
