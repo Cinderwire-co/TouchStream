@@ -53,10 +53,12 @@ func makeDataPartition(emmc string, at int64, settings string) error {
 		}
 	}
 	// Its network address too (Luckfox's start script makes one up the first time, and keeps it here),
-	// so the box keeps its address on the network, installed
-	if mac := filepath.Join(filepath.Dir(settings), "ethaddr.txt"); fileExists(mac) {
-		if err := run("cp", mac, dir); err != nil {
-			return err
+	// so the box keeps its address on the network, installed; and any SSH keys (a developer's)
+	for _, name := range []string{"ethaddr.txt", "openssh"} {
+		if path := filepath.Join(filepath.Dir(settings), name); fileExists(path) {
+			if err := run("cp", "-a", path, dir); err != nil {
+				return err
+			}
 		}
 	}
 	return os.WriteFile(filepath.Join(dst, ".grown"), nil, 0o644) // (made at its full size already)

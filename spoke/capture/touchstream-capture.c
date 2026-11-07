@@ -173,13 +173,29 @@ static int xioctl(int fd, unsigned long req, void *arg) {
     return r;
 }
 
-/* set_edid gives the source our EDID, if it doesn't have it already (setting it makes the source
- * read it again, and start over). */
+/* Luckfox's driver can hold the hotplug line high all the time (a KVM's "dummy plug", so the PC
+ * always sees a screen): a source then never hears that the EDID changed, and keeps the one it read
+ * as the box started (the chip's own, "T749-fHD720"). unforce_hotplug turns that off, so setting the
+ * EDID drops the line for a moment and the source reads ours; it says whether it was on. */
+#define FORCE_HPD "/sys/module/tc35874x/parameters/force_hpd"
+
+static int unforce_hotplug(void) {
+    FILE *f = fopen(FORCE_HPD, "r+");
+    if (!f) return 0;
+    int forced = fgetc(f) == '1';
+    if (forced) rewind(f), fputs("0", f);
+    fclose(f);
+    return forced;
+}
+
+/* set_edid gives the source our EDID, if it doesn't have it already, or if the hotplug line was
+ * held (setting it makes the source read it again, and start over). */
 static void set_edid(int subdev, int fps) {
     uint8_t want[256], have[256];
     edid(want, fps);
+    int forced = unforce_hotplug();
     struct v4l2_edid e = {.pad = 0, .start_block = 0, .blocks = 2, .edid = have};
-    if (xioctl(subdev, VIDIOC_G_EDID, &e) == 0 && e.blocks == 2 && memcmp(want, have, 256) == 0) return;
+    if (!forced && xioctl(subdev, VIDIOC_G_EDID, &e) == 0 && e.blocks == 2 && memcmp(want, have, 256) == 0) return;
     e = (struct v4l2_edid){.pad = 0, .start_block = 0, .blocks = 2, .edid = want};
     if (xioctl(subdev, VIDIOC_S_EDID, &e) < 0) fprintf(stderr, "Couldn't set the EDID: %s\n", strerror(errno));
 }

@@ -11,6 +11,7 @@
 #                             Drive makes of their folder (default: ~/Downloads/Luckfox PicoKVM-*.zip)
 #   tools/dev image [--xz]    the spoke's image for the PicoKVM, made from Luckfox's (tools/dev firmware
 #                             first), into .dev/picokvm/: the installer writes it (TOUCHSTREAM_SPOKE_IMAGE)
+#                             (TOUCHSTREAM_SSH_KEY=~/.ssh/KEY.pub: with a developer's SSH key; never release it)
 #   tools/dev reset           stop everything and delete .dev/ (the dev hub's data and recordings)
 #
 # It all lives in .dev/ (git-ignored). The dev hub has ports of its own, so it runs beside a hub
@@ -248,7 +249,8 @@ case "${1:-}" in
         "$ROOT/spoke/capture/build"
         version="$(sed -n 's/^const Version = "\(.*\)"/\1/p' "$ROOT/spoke/internal/spoke/spoke.go")"
         python3 -I "$ROOT/tools/picokvm_image.py" build "$lite" "$ROOT/spoke/build/touchstream-spoke" \
-            "$DEV/picokvm/touchstream-spoke-picokvm-$version.img" --capture "$ROOT/spoke/build/touchstream-capture" ${2:+"$2"}
+            "$DEV/picokvm/touchstream-spoke-picokvm-$version.img" --capture "$ROOT/spoke/build/touchstream-capture" \
+            ${TOUCHSTREAM_SSH_KEY:+--ssh-key "$TOUCHSTREAM_SSH_KEY"} ${2:+"$2"}
         ;;
     reset)
         if [ -t 0 ]; then

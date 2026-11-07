@@ -65,6 +65,7 @@ func main() {
 	touch := flags.String("touch", "/dev/input/event0", "the box's touch (evdev), if it has one")
 	keepCard := flags.Bool("keep-card", false, "install: the card can still start the box (to try its own storage with the card out)")
 	bootloader := flags.Bool("bootloader", false, "install: the card's boot loader goes onto the box too")
+	screenWeb := flags.Bool("screen-web", false, "serve the screen on the network (/screen: see it and tap it), as the emulator does")
 	_ = flags.Parse(args)
 	if command == "splash" { // (early in the box's startup: before its data partition's there)
 		if err := lcd.Show(*fb, screen.Splash("Starting…"), true); err != nil {
@@ -91,7 +92,7 @@ func main() {
 		} else if did != "" {
 			log.Print(did)
 		}
-		err = run(ctx, store, *data, *source, *address, strings.Fields(*capture), strings.Fields(*audio), *fb, *touch)
+		err = run(ctx, store, *data, *source, *address, strings.Fields(*capture), strings.Fields(*audio), *fb, *touch, *screenWeb)
 	case "pair":
 		if flags.NArg() != 2 {
 			log.Fatal("usage: touchstream-spoke pair HUB CODE")
@@ -134,7 +135,8 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, store *config.Store, data, source, address string, capture, audio []string, fb, touch string) error {
+func run(ctx context.Context, store *config.Store, data, source, address string, capture, audio []string, fb, touch string,
+	screenWeb bool) error {
 	var src media.Source
 	var replay *media.Replay // the emulator's stand-in for the HDMI input
 	switch {
@@ -202,7 +204,9 @@ func run(ctx context.Context, store *config.Store, data, source, address string,
 		Reset:   func() { backToSetup(store) },
 	}
 	settings.Saved = panel.Saved
-	screen.Routes(mux, panel)
+	if replay != nil || screenWeb { // (on a box, only to try things out: anyone on its network could tap it)
+		screen.Routes(mux, panel)
+	}
 	// The box's own screen and touch, turned round as they are in the case (the emulator has
 	// neither: its screen is the /screen page)
 	display := &lcd.Display{Path: fb, Rotate180: true, Render: panel.Render}

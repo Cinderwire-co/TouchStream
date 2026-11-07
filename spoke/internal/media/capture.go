@@ -8,8 +8,10 @@ import (
 	"io"
 	"log"
 	"math"
+	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -88,8 +90,9 @@ func (c *Capture) session(ctx context.Context, fps string, kbps int, clock *carr
 		return err
 	}
 
-	// The picture goes to whichever ffmpeg is making the stream (none while there's no signal),
-	// from a keyframe's parameters (SPS) on: before them it couldn't make sense of it
+	// The picture goes to whichever ffmpeg is making the stream (none while there's no signal), as
+	// it comes (ffmpeg takes the time it comes as its time: see MuxArgs), from a keyframe's
+	// parameters (SPS) on: before them it couldn't make sense of it
 	var mu sync.Mutex
 	var current io.Writer
 	var fresh bool // the current ffmpeg hasn't had a keyframe yet
@@ -176,6 +179,11 @@ func (c *Capture) session(ctx context.Context, fps string, kbps int, clock *carr
 		}
 	}
 	defer end()
+	// The wall clock can jump (the box's starts in 2021, until ntpd sets it): the sound's timestamps
+	// would jump with it, so ffmpeg starts again
+	wall, mono := time.Now().Round(0), time.Now()
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
 	for {
 		var stopped <-chan struct{}
 		if mux != nil {
@@ -221,6 +229,15 @@ func (c *Capture) session(ctx context.Context, fps string, kbps int, clock *carr
 				begin()
 			}
 			continue
+		case t := <-tick.C:
+			moved := t.Round(0).Sub(wall) - t.Sub(mono)
+			wall, mono = t.Round(0), t
+			if (moved > time.Second || moved < -time.Second) && now != nil {
+				log.Printf("HDMI capture: the clock moved %s: ffmpeg starts again", moved.Round(time.Second))
+				end()
+				begin()
+			}
+			continue
 		}
 		break
 	}
@@ -238,21 +255,79 @@ type muxer struct {
 	done chan struct{}
 }
 
+// SoundBuffer is where the box's sound capture buffer is set (its first card's, hw:0), in KiB. Luckfox's
+// kernel makes it 16 (85 ms): a busy moment on the one core then loses sound, and it runs short of the
+// picture (2% of it, here). It can only change while nothing's capturing.
+var SoundBuffer = "/proc/asound/card0/pcm0c/sub0/prealloc"
+
+// GrowSoundBuffer makes the sound capture buffer at least kib KiB, if the box has one to set.
+func GrowSoundBuffer(kib int) {
+	data, err := os.ReadFile(SoundBuffer)
+	if err != nil {
+		return // (not the box)
+	}
+	if now, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && now < kib {
+		if err := os.WriteFile(SoundBuffer, []byte(strconv.Itoa(kib)), 0); err != nil {
+			log.Printf("HDMI sound: its buffer stays %d KiB: %v", now, err)
+		}
+	}
+}
+
+// WaitClockSet waits for the wall clock to be set (to be past 2021, where the box starts), up to most.
+// It's a var so tests needn't wait.
+var WaitClockSet = func(ctx context.Context, most time.Duration) {
+	for end := time.Now().Add(most); time.Now().Year() < 2025 && time.Now().Before(end) && ctx.Err() == nil; {
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
 // MuxArgs is the ffmpeg command for a signal at fps: the picture as it is (copied), and the sound
 // as AAC, in MPEG-TS with no added delay.
-func MuxArgs(fps float64, audio []string) []string {
-	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-fflags", "+genpts",
-		"-f", "h264", "-framerate", Rate(fps), "-i", "pipe:0"}
+//
+// With the box's sound (ALSA), the two start together: the sound's timestamps are the wall
+// clock's (when its first sample came), and so are the picture's (when its first frame came), both
+// kept (-copyts) and moved by start, any time about now. From there each counts on, frames and
+// samples, so neither wanders. (Left to itself, ffmpeg started each at 0 when it got to it, and
+// the sound was anywhere up to a second out, a different amount each time; and frames timed as
+// they came bunch up after a keyframe.) ffmpeg barely looks at the picture before it opens the
+// sound: its first keyframe has all it needs.
+func MuxArgs(fps float64, audio []string, start time.Time) []string {
+	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-fflags", "+genpts"}
+	together := alsa(audio) && !start.IsZero()
+	offset := []string{"-itsoffset", fmt.Sprintf("%.6f", -float64(start.UnixMicro())/1e6)}
+	if together {
+		args = append(args, "-copyts", "-thread_queue_size", "1024", "-use_wallclock_as_timestamps", "1")
+		args = append(args, offset...)
+	}
+	args = append(args, "-probesize", "65536", "-analyzeduration", "0", "-f", "h264", "-framerate", Rate(fps), "-i", "pipe:0")
+	if together {
+		args = append(args, "-thread_queue_size", "1024")
+		args = append(args, offset...)
+	}
 	args = append(args, audio...)
 	args = append(args, "-map", "0:v", "-c:v", "copy")
-	if len(audio) > 0 {
-		args = append(args, "-map", "1:a", "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "48000")
+	if together { // each frame a frame on from the first, in MPEG-TS's 90 kHz ticks
+		args = append(args, "-bsf:v", "setts=ts=STARTPTS+N*"+strconv.FormatFloat(90000/rateOf(fps), 'f', -1, 64))
 	}
-	return append(args, "-f", "mpegts", "-muxdelay", "0", "-muxpreload", "0", "pipe:1")
+	if len(audio) > 0 {
+		args = append(args, "-map", "1:a")
+		if together { // each sample a sample on from the first
+			args = append(args, "-af", "asetpts=N/SR/TB+STARTPTS")
+		}
+		args = append(args, "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "48000")
+	}
+	// Each sound frame sent as it's made, in its own PES (ffmpeg gathers several otherwise): a server
+	// that times each track by when it comes (MediaMTX's RTSP) then has the two arrive together
+	return append(args, "-f", "mpegts", "-muxdelay", "0", "-muxpreload", "0", "-pes_payload_size", "0", "-flush_packets", "1", "pipe:1")
 }
 
 func (c *Capture) mux(ctx context.Context, fps float64, clock *carry, emit func([]byte)) (*muxer, error) {
-	cmd := exec.CommandContext(ctx, "ffmpeg", MuxArgs(fps, c.Audio)...)
+	GrowSoundBuffer(256) // (1.4 s: before ffmpeg opens the card)
+	if !clock.waited {   // the first time, the clock may not be set yet: its time's no good to go by
+		clock.waited = true
+		WaitClockSet(ctx, 20*time.Second)
+	}
+	cmd := exec.CommandContext(ctx, "ffmpeg", MuxArgs(fps, c.Audio, time.Now())...)
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -329,6 +404,29 @@ func spsAt(b []byte) int {
 	return -1
 }
 
+// rateOf is fps as ffmpeg has it (Rate): the NTSC ones exactly.
+func rateOf(fps float64) float64 {
+	r := Rate(fps)
+	if n, d, ok := strings.Cut(r, "/"); ok {
+		a, _ := strconv.ParseFloat(n, 64)
+		b, _ := strconv.ParseFloat(d, 64)
+		return a / b
+	}
+	v, _ := strconv.ParseFloat(r, 64)
+	return v
+}
+
+// alsa says whether the sound is the box's own (ALSA, with the wall clock's timestamps): the
+// emulator's is made up (lavfi), starting at 0.
+func alsa(audio []string) bool {
+	for i, a := range audio {
+		if a == "-f" && i+1 < len(audio) && audio[i+1] == "alsa" {
+			return true
+		}
+	}
+	return false
+}
+
 // Rate is a frame rate as ffmpeg takes it: the NTSC ones (59.94, 29.97, 23.976) exactly.
 func Rate(fps float64) string {
 	for _, n := range []float64{24, 30, 60} {
@@ -347,17 +445,25 @@ const wrapPCR = (1 << 33) * 300 // where a PCR goes back to 0 (26.5 hours)
 // carry keeps the stream's clocks running forward from one ffmpeg to the next: each starts its
 // own near 0, so each is moved to begin a second after the last one's.
 type carry struct {
+	waited  bool  // for the wall clock to be set, before the first ffmpeg
 	offset  int64 // 27 MHz ticks added to this ffmpeg's clocks
 	last    int64 // the last PCR sent, moved
 	started bool
 	waiting [][]byte // this ffmpeg's packets before its first PCR
+	align   aligner
 }
 
-func (c *carry) begin() { c.started, c.waiting = false, nil }
+func (c *carry) begin() {
+	c.started, c.waiting, c.align = false, nil, aligner{soundAt: -1, firstKey: -1, from: -1}
+}
 
 // packet moves p's clocks and returns what can go out: nothing until this ffmpeg's first PCR
-// (which sets how far to move them), then everything.
+// (which sets how far to move them), then everything; all from where its picture and sound both
+// start (aligner).
 func (c *carry) packet(p []byte) [][]byte {
+	if !c.align.keep(p) {
+		return nil
+	}
 	if !c.started {
 		pcr, ok := ts.PCR(p)
 		if !ok {
@@ -378,6 +484,65 @@ func (c *carry) packet(p []byte) [][]byte {
 	c.move(p)
 	return [][]byte{p}
 }
+
+// aligner starts each ffmpeg's stream with its picture and its sound together. The sound starts a
+// little after the picture (ffmpeg opens the card once it has seen the first keyframe), and a
+// server that starts each track at its first packet (MediaMTX does, for RTSP and RTMP, which the
+// hub restreams from) would keep them that far out of step, a different amount each time: half a
+// second, here. So the stream starts at the first keyframe once the sound has begun, and the sound
+// from there; with no sound within 3 s of picture, at a keyframe all the same.
+type aligner struct {
+	tables    ts.Tables
+	soundAt   int64 // the first sound's PTS (-1: none yet)
+	firstKey  int64 // the first keyframe's PTS (-1: none yet)
+	from      int64 // the keyframe the stream starts at (-1: not yet)
+	dropSound bool  // the sound packet now is from before it
+}
+
+func (a *aligner) keep(p []byte) bool {
+	a.tables.Note(p)
+	switch pid := ts.PID(p); {
+	case a.tables.Table(p) || a.tables.VideoPID == 0:
+		return true // (the tables; or before them, as ffmpeg sends them first)
+	case a.tables.AudioPID == 0:
+		return a.from >= 0 || a.startAt(p, false) // no sound: from the first keyframe
+	case a.from < 0 && pid == a.tables.AudioPID:
+		if pts, ok := ts.PTS(p); ok && a.soundAt < 0 {
+			a.soundAt = pts
+		}
+		return false
+	case a.from < 0:
+		return a.startAt(p, true)
+	case pid == a.tables.AudioPID:
+		if pts, ok := ts.PTS(p); ok {
+			a.dropSound = !atOrAfter(pts, a.from)
+		}
+		return !a.dropSound
+	}
+	return true
+}
+
+// startAt says whether the stream starts at p: a keyframe, once the sound has (if it's waited for).
+func (a *aligner) startAt(p []byte, sound bool) bool {
+	if ts.PID(p) != a.tables.VideoPID || !a.tables.Ready(p) {
+		return false
+	}
+	pts, ok := ts.PTS(p)
+	if !ok {
+		return false
+	}
+	if a.firstKey < 0 {
+		a.firstKey = pts
+	}
+	if !sound || a.soundAt >= 0 && atOrAfter(pts, a.soundAt) || !atOrAfter(a.firstKey+3*ts.PTSHz, pts) {
+		a.from = pts
+		return true
+	}
+	return false
+}
+
+// atOrAfter compares two 90 kHz timestamps across the 33-bit wrap.
+func atOrAfter(a, b int64) bool { return (a-b)&(1<<33-1) < 1<<32 }
 
 func (c *carry) move(p []byte) {
 	ts.Shift(p, c.offset)

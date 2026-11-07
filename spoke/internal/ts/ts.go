@@ -132,12 +132,16 @@ func PTS(p []byte) (int64, bool) {
 }
 
 // Tables remembers the stream's PAT and PMT, so a part can start with them, and which
-// PID carries the video.
+// PIDs carry the video and the sound.
 type Tables struct {
 	PAT, PMT []byte
 	pmtPID   uint16
 	VideoPID uint16
+	AudioPID uint16 // 0: no sound
 }
+
+// Table reports whether p is one of the stream's tables (its PAT or PMT).
+func (t *Tables) Table(p []byte) bool { pid := PID(p); return pid == 0 || pid == t.pmtPID && pid != 0 }
 
 // Note looks at one packet and keeps any table in it.
 func (t *Tables) Note(p []byte) {
@@ -150,7 +154,7 @@ func (t *Tables) Note(p []byte) {
 		}
 	case pid == t.pmtPID && pid != 0 && Start(p):
 		t.PMT = append(t.PMT[:0], p...)
-		t.VideoPID = videoPID(section(p))
+		t.VideoPID, t.AudioPID = streamPIDs(section(p))
 	}
 }
 
@@ -167,18 +171,26 @@ func section(p []byte) []byte {
 	return pl[1+int(pl[0]):] // after the pointer field
 }
 
-func videoPID(s []byte) uint16 {
+// streamPIDs reads a PMT section for the first video stream's PID and the first sound's.
+func streamPIDs(s []byte) (video, audio uint16) {
 	if len(s) < 12 {
-		return 0
+		return 0, 0
 	}
 	end := 3 + (int(s[1]&0x0F)<<8 | int(s[2])) - 4 // section length, less the CRC
 	at := 12 + (int(s[10]&0x0F)<<8 | int(s[11]))   // after the program info
 	for at+5 <= end && at+5 <= len(s) {
 		kind, pid := s[at], uint16(s[at+1]&0x1F)<<8|uint16(s[at+2])
-		if kind == 0x1B || kind == 0x24 { // H.264, H.265
-			return pid
+		switch kind {
+		case 0x1B, 0x24: // H.264, H.265
+			if video == 0 {
+				video = pid
+			}
+		case 0x0F, 0x11, 0x03, 0x04, 0x81: // AAC (ADTS, LATM), MPEG audio, AC-3
+			if audio == 0 {
+				audio = pid
+			}
 		}
 		at += 5 + (int(s[at+3]&0x0F)<<8 | int(s[at+4]))
 	}
-	return 0
+	return video, audio
 }

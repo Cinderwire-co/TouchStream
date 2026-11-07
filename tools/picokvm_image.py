@@ -3,9 +3,10 @@ image from theirs.
 
     python3 tools/picokvm_image.py layout IMAGE                  the partitions, and where they are
     python3 tools/picokvm_image.py extract IMAGE NAME OUT        one partition (system_a, say) into OUT
-    python3 tools/picokvm_image.py build IMAGE SPOKE OUT [--capture HELPER] [--xz]
+    python3 tools/picokvm_image.py build IMAGE SPOKE OUT [--capture HELPER] [--ssh-key KEY.pub] [--xz]
                                                                  the spoke's image (SPOKE: its ARMv7 binary;
-                                                                 HELPER: touchstream-capture, for HDMI)
+                                                                 HELPER: touchstream-capture, for HDMI; KEY:
+                                                                 a developer's SSH key, never in a release)
 
 The image has no MBR or GPT: its partitions are in the U-Boot environment at its start (32 KiB, with
 a CRC), as blkdevparts=mmcblk1:32K(env),512K@32K(idblock),... The spoke's image is theirs with:
@@ -14,6 +15,9 @@ a CRC), as blkdevparts=mmcblk1:32K(env),512K@32K(idblock),... The spoke's image 
   place of their apps, once the drivers and the network are up
 - the box's screen kept for the spoke (fbcon=map:1: the kernel's console, and its logo, stay off
   it), with TouchStream's splash from the first moment of startup (an init script, S00)
+- no way in with Luckfox's root password (it's published): no telnet, and SSH by key only. A
+  developer's image (--ssh-key) has their key in /userdata/openssh/.ssh/authorized_keys, where
+  Luckfox's sshd looks; a release has none
 - 96K free after the security partition, holding the installer's settings block at 2880K (a 64 KiB
   boundary in the first 64 MiB, where the installer looks); the partitions after it move down to
   make room, and keep their numbers, which Luckfox's scripts use
@@ -77,8 +81,11 @@ if [ "$media" = emmc ] && [ -b /dev/mmcblk1 ]; then
         mkdir -p /mnt/card/TouchStream && mount --bind /mnt/card/TouchStream "$data/recordings"
     fi
 fi
+# $data/screen-web serves the screen on the network, to try things out (anyone on it could tap it)
+web=""
+[ -f "$data/screen-web" ] && web="-screen-web"
 while true; do
-    /usr/bin/touchstream-spoke run -data "$data" 2>&1 | logger -t touchstream
+    /usr/bin/touchstream-spoke run -data "$data" $web 2>&1 | logger -t touchstream
     sleep 2
 done
 """
@@ -231,6 +238,34 @@ def hdmi_refclk_27mhz(boot):
     raise ValueError("the device tree doesn't set the HDMI chip's reference clock: check it by hand")
 
 
+# sshd: keys only, none of them root's password (Luckfox's is published)
+SSHD_KEYS_ONLY = {'PermitRootLogin': 'prohibit-password', 'PasswordAuthentication': 'no', 'KbdInteractiveAuthentication': 'no'}
+
+
+def harden(system, work):
+    """No way into a system partition with a password: telnet's gone, and sshd takes keys only."""
+    config = os.path.join(work, 'sshd_config')
+    debugfs(system, [f'dump /etc/ssh/sshd_config {{w}}/sshd_config'], writable=False)
+    with open(config) as f:
+        lines = f.read().splitlines()
+    keep = [line for line in lines if line.split()[:1] and line.split()[0] not in SSHD_KEYS_ONLY or not line.split()]
+    keep += [f'{k} {v}' for k, v in SSHD_KEYS_ONLY.items()]
+    with open(config, 'w') as f:
+        f.write('\n'.join(keep) + '\n')
+    debugfs(system, ['rm /etc/ssh/sshd_config', 'write {w}/sshd_config /etc/ssh/sshd_config',
+                     'set_inode_field /etc/ssh/sshd_config mode 0100644', 'rm /etc/init.d/S50telnet'])
+
+
+def add_key(userdata, key, work):
+    """A developer's SSH key on the data partition, where Luckfox's sshd looks (never in a release)."""
+    shutil.copy(key, os.path.join(work, 'authorized_keys'))
+    debugfs(userdata, ['mkdir /openssh', 'mkdir /openssh/.ssh', 'write {w}/authorized_keys /openssh/.ssh/authorized_keys',
+                       'set_inode_field /openssh mode 040700', 'set_inode_field /openssh/.ssh mode 040700',
+                       'set_inode_field /openssh/.ssh/authorized_keys mode 0100600',
+                       'set_inode_field /openssh uid 0', 'set_inode_field /openssh/.ssh uid 0',
+                       'set_inode_field /openssh/.ssh/authorized_keys uid 0'])
+
+
 def add_spoke(system, spoke, work, capture=None):
     """Put the spoke (and its capture helper) in a system partition (an ext4 image), started in place
     of Luckfox's apps."""
@@ -260,7 +295,7 @@ def add_spoke(system, spoke, work, capture=None):
     debugfs(system, commands)
 
 
-def build(source, spoke, out, compress=False, capture=None):
+def build(source, spoke, out, compress=False, capture=None, ssh_key=None):
     with open(source, 'rb') as f:
         env = read_env(f)
     spec = variables(env)['blkdevparts']
@@ -291,6 +326,13 @@ def build(source, spoke, out, compress=False, capture=None):
         extract(source, 'system_a', system)
         print('Putting the spoke in the system partition')
         add_spoke(system, spoke, work, capture)
+        harden(system, work)
+        userdata = None
+        if ssh_key:
+            print('Adding the SSH key (a developer\'s image: never release it)')
+            userdata = os.path.join(work, 'userdata.img')
+            extract(source, 'userdata', userdata)
+            add_key(userdata, ssh_key, work)
         print('Putting the image together')
         with open(source, 'rb') as src, open(out + '.part', 'wb') as dst:
             dst.write(struct.pack('<I', zlib.crc32(new_env)) + new_env)
@@ -298,6 +340,9 @@ def build(source, spoke, out, compress=False, capture=None):
                 if name in ('system_a', 'system_b'):
                     with open(system, 'rb') as s:
                         copy(s, 0, size, dst, moved[name][1])
+                elif name == 'userdata' and userdata:
+                    with open(userdata, 'rb') as u:
+                        copy(u, 0, size, dst, moved[name][1])
                 elif name in ('boot_a', 'boot_b'):
                     src.seek(at)
                     dst.seek(moved[name][1])
@@ -337,13 +382,14 @@ def main(args):
     elif args[:1] == ['extract'] and len(args) == 4:
         extract(*args[1:])
     elif args[:1] == ['build'] and len(args) >= 4:
-        rest, capture = args[4:], None
-        if '--capture' in rest:
-            at = rest.index('--capture')
-            capture, rest = rest[at + 1], rest[:at] + rest[at + 2:]
+        rest, options = args[4:], {}
+        for flag in ('--capture', '--ssh-key'):
+            if flag in rest:
+                at = rest.index(flag)
+                options[flag[2:].replace('-', '_')], rest = rest[at + 1], rest[:at] + rest[at + 2:]
         if rest not in ([], ['--xz']):
             sys.exit(__doc__)
-        build(args[1], args[2], args[3], compress=rest == ['--xz'], capture=capture)
+        build(args[1], args[2], args[3], compress=rest == ['--xz'], **options)
     else:
         sys.exit(__doc__)
 

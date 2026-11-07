@@ -139,5 +139,17 @@ box's own ffmpeg 4.4:
    installer's card an exFAT card for recordings, mounted over `recordings`. Luckfox's factory eMMC is backed up in
    `.dev/backup/picokvm-emmc-factory` (its first 1347 MiB, MD5-checked against the box, and its data partition's
    files).
-7. **Still to check**: touch at each corner, RTMPS straight to YouTube, the HDMI input's 1080p30 and other rates,
+7. **Sound and picture in step** (measured with a white flash and a beep together every 2 s from the Mac, each
+   frame's and each 5 ms of sound's own timestamp): three things were wrong, and are fixed. The sound card's
+   buffer was 16 KB (85 ms), so a busy moment lost sound: 2% of it, and the sound ran short of the picture (the
+   spoke makes it 256 KB before ffmpeg opens the card). ffmpeg started each track at 0 when it got to it, so the
+   sound was up to a second out, a different amount each time (now both are timed by the wall clock as they come,
+   then counted on: frames, and samples). And each stream now starts with both tracks together (the first keyframe
+   once the sound has begun). On the box, three sessions came out within one frame of each other, and of zero.
+   The hub restreams from MediaMTX's HLS, not its RTSP: RTSP (and RTMP) readers got the two up to 0.85 s apart,
+   differently each time one connected; HLS keeps the spoke's timestamps.
+8. **The EDID a source sees**: Luckfox's driver holds the hotplug line high (`force_hpd`, a KVM's "dummy plug"),
+   so a source kept the chip's own EDID ("T749-fHD720") from the box's start; the capture helper turns that off,
+   and sets ours, so the source reads it again.
+9. **Still to check**: touch at each corner, RTMPS straight to YouTube, the HDMI input's 1080p30 and other rates,
    and memory with everything running.

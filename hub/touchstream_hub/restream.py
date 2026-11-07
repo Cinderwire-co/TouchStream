@@ -12,9 +12,12 @@ from . import settings
 
 
 def build_command(spoke_id, dest):
-    source = f'rtsp://127.0.0.1:{settings.MTX_RTSP_PORT}/spoke/{spoke_id}'
-    cmd = [settings.FFMPEG_BIN, '-hide_banner', '-nostdin', '-loglevel', 'warning',
-           '-rtsp_transport', 'tcp', '-i', source]
+    # From MediaMTX's HLS (MPEG-TS segments), which keeps the spoke's timestamps as they are. Its RTSP
+    # and RTMP put sound and picture out of step by up to a second, a different amount each time a
+    # reader connects (RTSP readers line the tracks up by MediaMTX's estimates of each one's wall-clock
+    # time); HLS is a few seconds behind, which YouTube's own delay dwarfs.
+    source = f'http://127.0.0.1:{settings.MTX_HLS_PORT}/spoke/{spoke_id}/index.m3u8'
+    cmd = [settings.FFMPEG_BIN, '-hide_banner', '-nostdin', '-loglevel', 'warning', '-i', source]
     kbps = dest['transcode_kbps']
     if kbps:
         cmd += ['-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',

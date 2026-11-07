@@ -64,7 +64,7 @@ case "${1:-}" in
         data="${DATA:-$data}"
         source=(-source replay:/opt/clip.ts)
         if [ "${SOURCE:-}" = hdmi ]; then
-            source=(-source hdmi -capture "/opt/touchstream/touchstream-capture-standin /opt/clip.ts"
+            source=(-screen-web -source hdmi -capture "/opt/touchstream/touchstream-capture-standin /opt/clip.ts"
                 -audio "-re -f lavfi -i sine=frequency=440:sample_rate=48000")
         fi
         card=()   # the installer's settings, as on a card it wrote
