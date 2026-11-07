@@ -20,9 +20,10 @@ import (
 // Capture is the box's HDMI input. Its helper (touchstream-capture, in C, with the box's encoder)
 // turns the picture into H.264 on its stdout, with the stream's parameters before every keyframe
 // and no B-frames (as the RV1106 makes it: so each frame's time is its place in the stream), and
-// says what's coming in on its stderr, a JSON line each time it changes:
+// says what's coming in on its stderr, a JSON line each time it changes: the source's rate, and
+// the stream's (every 2nd frame, when the source sends twice the rate the spoke's set to):
 //
-//	{"signal": true, "width": 1920, "height": 1080, "fps": 59.94}
+//	{"signal": true, "width": 1920, "height": 1080, "fps": 59.94, "rate": 29.97}
 //	{"signal": false}
 //
 // For each signal it locks onto, ffmpeg (the box's own) adds the HDMI sound as AAC and makes
@@ -41,6 +42,7 @@ type status struct {
 	Width  int     `json:"width"`
 	Height int     `json:"height"`
 	FPS    float64 `json:"fps"`
+	Rate   float64 `json:"rate"` // (an older helper doesn't say: the source's)
 }
 
 func (c *Capture) Signal() Signal {
@@ -153,7 +155,7 @@ func (c *Capture) session(ctx context.Context, fps string, kbps int, clock *carr
 	var mux *muxer
 	var again <-chan time.Time
 	begin := func() {
-		m, err := c.mux(ctx, now.FPS, clock, emit)
+		m, err := c.mux(ctx, Signal{FPS: now.FPS, Rate: now.Rate}.StreamRate(), clock, emit)
 		if err != nil {
 			log.Printf("HDMI capture: ffmpeg: %v", err)
 			again = time.After(2 * time.Second)
@@ -195,8 +197,13 @@ func (c *Capture) session(ctx context.Context, fps string, kbps int, clock *carr
 				continue
 			}
 			now = &st
-			c.signal.Store(&Signal{Present: true, Width: st.Width, Height: st.Height, FPS: st.FPS})
-			log.Printf("HDMI: %dx%d at %.2f fps", st.Width, st.Height, st.FPS)
+			sig := &Signal{Present: true, Width: st.Width, Height: st.Height, FPS: st.FPS, Rate: st.Rate}
+			c.signal.Store(sig)
+			if r := sig.StreamRate(); r != st.FPS {
+				log.Printf("HDMI: %dx%d at %.2f fps, streamed at %.2f", st.Width, st.Height, st.FPS, r)
+			} else {
+				log.Printf("HDMI: %dx%d at %.2f fps", st.Width, st.Height, st.FPS)
+			}
 			begin()
 			continue
 		case <-stopped:

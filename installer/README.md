@@ -11,13 +11,15 @@ build step).
 |---|---|
 | `internal/hubsetup` | Finds the hub (ports 8080 to 8099), runs the hub's own install script (an embedded copy, kept the same as `hub/install` by a test) |
 | `internal/hubapi` | Signs in to the hub and registers each spoke (`POST /api/spokes`), or forgets it if its card isn't written |
-| `internal/cards` | Lists the cards to offer: removable SD or USB, 512 GB or less, never a system or APFS disk |
+| `internal/cards` | Lists the cards to offer: removable SD or USB, 512 GB or less, never a system or APFS disk; on a Mac, opens one with an admin's password (macOS's `authopen`) |
 | `internal/image` | Unpacks the image (`.xz`, `.gz`), writes it with the spoke's settings in its block, partition table last |
 | `internal/flash` | Writes a card and reads it all back to check it |
-| `internal/elevate` | Runs the writer with admin rights: the Mac's password prompt, or Windows' permission prompt |
+| `internal/elevate` | Runs the writer with admin rights on Windows (its permission prompt) |
 
-The writer is the app itself, run as `TouchStream Installer write-card ...` with admin rights; it reports progress
-through a file the app watches.
+On Windows, the writer is the app itself, run as `TouchStream Installer write-card ...` with admin rights; it reports
+progress through a file the app watches. On a Mac, the app writes the card itself: `authopen` asks for an admin's
+password, opens the card and hands it back. (A program run as admin can't write a removable card there: macOS can't
+ask anyone whether it may, so it's refused with "operation not permitted".)
 
 ## Building
 

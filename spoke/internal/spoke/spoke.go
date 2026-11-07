@@ -308,7 +308,7 @@ func (s *Spoke) Status() map[string]any {
 	s.mu.Unlock()
 	status := map[string]any{
 		"version": Version, "model": "picokvm", "framerates": Rates, "signal": sig.Present,
-		"signal_label": nil, "signal_fps": nil, "framerate": nonEmpty(s.Store.Get().Framerate, "30"),
+		"signal_label": nil, "signal_fps": nil, "stream_fps": nil, "framerate": nonEmpty(s.Store.Get().Framerate, "30"),
 		"source": nil, "test_pattern": false, "test_pattern_at": 0,
 		"temp": cpuTemp(), "cpu": s.cpu.percent(), "mode": nonEmpty(mode, "off"), "network": "Ethernet",
 		"uplink": up, "uplink_error": nilIfEmpty(upErr),
@@ -321,6 +321,7 @@ func (s *Spoke) Status() map[string]any {
 		label = strings.TrimRight(strings.TrimRight(label, "0"), ".")
 		status["signal_label"] = fmt.Sprintf("%dp%s", sig.Height, label)
 		status["signal_fps"] = sig.FPS
+		status["stream_fps"] = sig.StreamRate()
 		status["source"] = "hdmi"
 	}
 	return status

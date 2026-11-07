@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,11 +24,28 @@ const (
 	BacklightLevel = 64
 )
 
-// Display draws the screen on the framebuffer at Path, whenever it changes.
+// Display draws the screen on the framebuffer at Path, whenever it changes: 20 times a second while
+// something's moving, 4 times a second while nothing is (the box has one core), and at once on a touch.
 type Display struct {
 	Path      string
 	Rotate180 bool
 	Render    func(time.Time) *image.RGBA
+
+	once sync.Once
+	wake chan struct{}
+}
+
+// Wake draws the screen again now (after a touch), at full speed.
+func (d *Display) Wake() {
+	select {
+	case d.woken() <- struct{}{}:
+	default:
+	}
+}
+
+func (d *Display) woken() chan struct{} {
+	d.once.Do(func() { d.wake = make(chan struct{}, 1) })
+	return d.wake
 }
 
 // Format is how the framebuffer lays out its pixels.
@@ -56,8 +74,10 @@ func (d *Display) Run(ctx context.Context) error {
 	backlight(Backlight)
 	frame := make([]byte, format.Stride*format.Height)
 	last := make([]byte, len(frame))
-	tick := time.NewTicker(50 * time.Millisecond)
-	defer tick.Stop()
+	const moving, still = 50 * time.Millisecond, 250 * time.Millisecond
+	timer := time.NewTimer(moving)
+	defer timer.Stop()
+	same := 0 // frames in a row that came out as the last did
 	for first := true; ; first = false {
 		Pack(format, d.Render(time.Now()), d.Rotate180, frame)
 		if first || !bytes.Equal(frame, last) {
@@ -65,19 +85,65 @@ func (d *Display) Run(ctx context.Context) error {
 				return err
 			}
 			copy(last, frame)
+			same = 0
+		} else {
+			same++
 		}
+		wait := moving
+		if same >= 3 {
+			wait = still
+		}
+		timer.Reset(wait)
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-tick.C:
+		case <-timer.C:
+		case <-d.woken():
+			same = 0
 		}
 	}
+}
+
+// Show puts one picture on the framebuffer at path, with the backlight on (the splash, at startup).
+func Show(path string, img *image.RGBA, rotate bool) error {
+	fb, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer fb.Close()
+	format, err := query(fb)
+	if err != nil {
+		format = RGB565
+	}
+	frame := make([]byte, format.Stride*format.Height)
+	Pack(format, img, rotate, frame)
+	if _, err := fb.WriteAt(frame, 0); err != nil {
+		return err
+	}
+	backlight(Backlight)
+	return nil
 }
 
 // Pack lays img out as the framebuffer wants it, into out (Stride × Height bytes).
 func Pack(f Format, img *image.RGBA, rotate bool, out []byte) {
 	b := img.Bounds()
 	size := f.Bits / 8
+	if size == 2 && b.Dx() >= f.Width && b.Dy() >= f.Height { // the panel's 16 bits: row by row, quickly
+		for y := 0; y < f.Height; y++ {
+			sy, step, sx := y, 4, 0
+			if rotate {
+				sy, step, sx = f.Height-1-y, -4, 4*(f.Width-1)
+			}
+			src := img.Pix[img.PixOffset(b.Min.X, b.Min.Y+sy):]
+			row := out[y*f.Stride : y*f.Stride+2*f.Width]
+			for x := 0; x < len(row); x, sx = x+2, sx+step {
+				v := uint32(src[sx])>>(8-f.Red.Length)<<f.Red.Offset | uint32(src[sx+1])>>(8-f.Green.Length)<<f.Green.Offset |
+					uint32(src[sx+2])>>(8-f.Blue.Length)<<f.Blue.Offset
+				row[x], row[x+1] = byte(v), byte(v>>8)
+			}
+		}
+		return
+	}
 	for y := 0; y < f.Height; y++ {
 		for x := 0; x < f.Width; x++ {
 			sx, sy := x, y

@@ -7,6 +7,7 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 
 ## Done recently
 
+- The PicoKVM, on the desk: it starts from the installer's card and pairs itself; HDMI capture at 1080p60 through the hardware encoder; HDMI sound at the right pitch (the HDMI chip's reference clock, 26 to 27 MHz, in the image's device tree); TouchStream's splash from the first moment, with the kernel's console and logo kept off the screen; and the spoke's screen at a quarter of the CPU it took. On a Mac, the installer opens the card itself with an admin's password (macOS's `authopen`), as macOS refuses a removable card to a program run as admin.
 - Spoke Recordings menu: rolling delete when the card fills, and a QR code that downloads a recording to a phone. The spoke makes a regular MP4 first, because phones can't play a streamed one.
 - Hub shows its real LAN address (not "localhost"). If the hub computer's IP changes, it tells its spokes the new address.
 - Recordings folder: one folder per broadcast, named for people, with the details embedded in each MP4. There's a native folder picker, and a Show in Finder / File Explorer button when you're on the hub's own computer.
@@ -118,15 +119,28 @@ Go live, End and Record, and recordings to phones by QR code. Still to come:
   small capture helper of our own, as Luckfox's `kvm_video` tops out at 2 Mbps; the EDID that asks the source for
   that rate; the screen (`/dev/fb0`) and its touch (`/dev/input/event0`); ffmpeg on board (it has RTMPS), for phone
   copies, clips and the direct stream; its time zone, from the hub.
-- **HDMI sound.** Its TC358743 has the sound wired inside, to the RV1106's I2S, but the driver plays it 1.29× fast (a
-  user's measurement). The TC358743 drives the audio clocks, so it looks like a clock setting between the two.
+- **Spokes sold ready to go** (Will installs the software before selling them): no installer's card, so no name.
+  Each gets one of its own until it's renamed in the dashboard: "Spoke" and the last four characters of its network
+  address ("Spoke 4F2A"), shown on its screen too, so two new ones on a desk can be told apart when they're adopted.
+- **The installer shows where the card goes**: a drawing of the PicoKVM (from photos of the real box: the front, the
+  microSD slot close up, and the ports), with the card going into its slot and the power last, on the "card's
+  ready" page.
+- **Installed on the box itself, the card for recordings** (Will's call, 2026-11-07; built: `spoke/internal/install`). The box starts from a card with
+  a system on it even with its eMMC's in place, so: the installer writes the card as now; at its first start, the
+  spoke copies itself onto the eMMC (boot and system partitions, the environment with `mmcblk0`, the pairing), checks
+  it, and only then wipes the card's start and formats it exFAT for recordings (readable on a Mac or PC when it's
+  taken out; the kernel and `mkfs.exfat` are there). Then it starts again, from the eMMC. A power cut part way
+  through leaves the card as it was, so it just starts over. With no card in, recordings go on the eMMC. Keep the
+  eMMC's own idblock and U-Boot (they're made to start from it), and the card image's kernel and device tree (4 CSI
+  lanes: the factory eMMC system's 2 can't carry 1080p60). This replaces Luckfox's software on the eMMC; their USB
+  flashing tool and eMMC image (in `.dev/picokvm/eMMC`) put it back.
 - **The image the installer writes**: built with Luckfox's Buildroot SDK, with the spoke and ffmpeg, released on
   GitHub as `touchstream-spoke-picokvm-VERSION.img.xz` with a `.sha256` beside it. It needs a 64 KiB block for the
   installer to fill in: at a 64 KiB boundary in the image's first 64 MiB, starting `TOUCHSTREAM-PROVISION-V1` and a
   newline, then zeros. The installer writes the hub's address and the spoke's credentials there, and the spoke reads
-  them at its first start (`spoke/internal/provision`, from `/dev/mmcblk1` or `/dev/mmcblk0`: check which is the
-  card). First check on the real box that it boots from the microSD card (it has its own 8 GB eMMC); if not, the
-  installer flashes it over USB instead.
+  them at its first start (`spoke/internal/provision`, from `/dev/mmcblk1`, the card). It's made from Luckfox's own
+  microSD image for now (`tools/picokvm_image.py`), and boots from the card with the eMMC in place (checked
+  2026-11-07).
 - Straight to YouTube (done in the emulator): with no hub, from stream keys added on the setup page; with a hub that's
   out of reach, from the schedule and keys it sends. Still to check on the box: ffmpeg's RTMPS (TLS) to YouTube, and
   the encoder following the setup page's resolution (720p means scaling in the encoder).

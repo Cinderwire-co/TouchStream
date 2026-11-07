@@ -132,8 +132,11 @@ const ratesFor = (spoke) => {
 const bitsFor = (rate, kbps) => (Number(rate) >= 50 && kbps < 10000 ? 12000 : kbps);
 
 /** The source's actual rate differs from the setting (29.97 counts as 30). */
+/** The stream isn't at the spoke's frame rate: the source sends one it can't be made from (a spoke streams every
+ *  2nd frame of a source sending twice its rate). */
 function rateMismatch(spoke) {
-  const fps = spoke.status && spoke.status.signal_fps;
+  const st = spoke.status || {};
+  const fps = st.stream_fps || st.signal_fps;
   return spoke.online && fps && Math.abs(fps - Number(spoke.framerate)) > 0.1 && !(spoke.framerate === '30' && Math.abs(fps - 29.97) < 0.05);
 }
 

@@ -20,7 +20,16 @@ type Signal struct {
 	Present bool
 	Width   int
 	Height  int
-	FPS     float64
+	FPS     float64 // the source's
+	Rate    float64 // the stream's: FPS, or a whole fraction of it (the rate the spoke's set to); 0: FPS
+}
+
+// StreamRate is the rate the stream goes out at.
+func (s Signal) StreamRate() float64 {
+	if s.Rate > 0 {
+		return s.Rate
+	}
+	return s.FPS
 }
 
 // NoSignal is the box's HDMI input until its capture is built: never a signal.

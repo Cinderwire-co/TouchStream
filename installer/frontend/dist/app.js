@@ -348,7 +348,7 @@ async function write(c) {
       h('div', { class: 'panel' }, h('div', { class: 'row' }, h('span', { class: 'ok' }, '✓'),
         h('div', {}, h('b', {}, 'Written and checked'),
           h('div', { class: 'muted small' }, result.paired ? 'Paired with the hub: it shows up in the dashboard by itself.' : 'Adopt it in the dashboard, under Add spoke, when it’s on.')))),
-      h('p', {}, 'Take the card out, and put it in ', h('b', {}, `${name}’s`), ' box.'),
+      h('p', {}, 'Take the card out. Unplug ', h('b', {}, `${name}’s`), ' box if it’s on, put the card in, then plug it back in: it starts from the card.'),
       result.note && h('p', { class: 'small' }, result.note),
       h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => { if (last) done(); else { state.index += 1; card(); } } },
         last ? 'Finish' : `Next: ${state.names[state.index + 1]}’s card`)));
@@ -367,7 +367,7 @@ function done() {
   const spokes = state.written.filter(Boolean);
   page(
     h('h1', {}, 'TouchStream is set up'),
-    spokes.length ? h('p', { class: 'lead' }, 'Put each card in its box, then plug in HDMI from your camera or switcher, Ethernet, and power. In a minute or so it shows up in the dashboard.')
+    spokes.length ? h('p', { class: 'lead' }, 'Put each card in its box while it’s unplugged, then plug in HDMI from your camera or switcher, Ethernet, and power last. In a minute or so it shows up in the dashboard.')
       : h('p', { class: 'lead' }, 'Run the installer again whenever you’re adding spokes.'),
     spokes.length > 0 && h('div', { class: 'summary' }, spokes.map((s) => h('div', { class: 'row' }, h('span', { class: 'ok' }, '✓'),
       h('b', { class: 'grow' }, s.name), h('span', { class: 'muted small' }, s.paired ? 'paired with the hub' : 'adopt it in the dashboard')))),

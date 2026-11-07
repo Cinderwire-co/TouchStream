@@ -97,9 +97,9 @@ func Unmount(c Card) error {
 	return nil
 }
 
-// Open opens a card to write (as admin, or as anyone for a disk image of their own). macOS can
-// mount a card's volumes again at any moment (closing a disk opened to write is enough), so a busy
-// card is unmounted again and retried.
+// Open opens a card to write: a disk image of someone's own as they are, a real card with an admin's
+// password (openAsAdmin). macOS can mount a card's volumes again at any moment (closing a disk opened
+// to write is enough), so a busy card is unmounted again and retried.
 func Open(c Card) (Target, error) {
 	for try := 0; ; try++ {
 		f, err := os.OpenFile(c.Device, os.O_RDWR, 0)
@@ -108,6 +108,8 @@ func Open(c Card) (Target, error) {
 			return f, nil
 		case errors.Is(err, os.ErrNotExist):
 			return nil, ErrGone
+		case errors.Is(err, os.ErrPermission):
+			return openAsAdmin(c)
 		case errors.Is(err, syscall.EBUSY) && try < 4:
 			_ = Unmount(c)
 			time.Sleep(500 * time.Millisecond)

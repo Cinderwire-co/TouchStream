@@ -6,13 +6,16 @@
  * The TC358743's picture (V4L2: /dev/video0, YUYV) goes in DMA buffers straight to the RV1106's
  * encoder, and out on stdout as H.264: Main profile, no B-frames, a constant bitrate, and a
  * keyframe every 2 seconds with its SPS and PPS. What's coming in goes on stderr, a JSON line each
- * time it changes:
+ * time it changes: the source's rate (fps), and the H.264's (rate):
  *
- *   {"signal": true, "width": 1920, "height": 1080, "fps": 59.94}
+ *   {"signal": true, "width": 1920, "height": 1080, "fps": 59.94, "rate": 29.97}
  *   {"signal": false}
  *
- * -fps (24, 25, 30, 50 or 60) goes in the EDID the source reads: 1080p at that rate, first, with
- * 2-channel PCM sound, as an HDMI sink (a DVI one gets no sound). See spoke/docs/picokvm.md.
+ * -fps (24, 25, 30, 50 or 60) is the rate the spoke's set to. It goes in the EDID the source reads:
+ * 1080p at that rate, preferred (the first timing, and first in the preference list), the
+ * other rates too, with 2-channel PCM sound, as an HDMI sink (a DVI one gets no sound). A source
+ * that sends a whole multiple of it anyway (a Mac picks the highest rate it's offered) is streamed
+ * at it, every 2nd frame. See spoke/docs/picokvm.md.
  *
  * Built with Luckfox's SDK toolchain against Rockchip's MPI (spoke/capture/build). It's ours, not
  * Luckfox's kvm_video, which showed which devices and calls the box uses.
@@ -116,11 +119,16 @@ void edid(uint8_t out[256], int fps) {
     x[0] = 0x02, x[1] = 0x03;
     x[3] = 0x80 | 0x40 | 0x01; /* underscanned; basic audio; one native timing (the preferred one) */
     int at = 4;
-    x[at++] = 0x40 | 6; /* video: the VICs, this rate's first */
+    x[at++] = 0x40 | 6; /* video: the VICs, this rate's first (native already: the first detailed timing) */
     x[at++] = t->vic;
     for (size_t i = 0; i < sizeof timings / sizeof *timings; i++)
         if (timings[i].vic != t->vic) x[at++] = timings[i].vic;
     x[at++] = 1;        /* 640x480 */
+    x[at++] = 0xE0 | 6; /* video format preference (CTA-861-F): this rate's first, then the others */
+    x[at++] = 13;
+    x[at++] = t->vic;
+    for (size_t i = 0; i < sizeof timings / sizeof *timings; i++)
+        if (timings[i].vic != t->vic) x[at++] = timings[i].vic;
     x[at++] = 0x20 | 3; /* audio: 2-channel LPCM at 32, 44.1 and 48 kHz, 16, 20 and 24 bits */
     x[at++] = 1 << 3 | 1, x[at++] = 0x07, x[at++] = 0x07;
     x[at++] = 0x80 | 3; /* speakers: front left and right */
@@ -149,9 +157,10 @@ int main(void) {
 
 /* ---- Saying what's coming in ---- */
 
-static void say_signal(int on, unsigned w, unsigned h, double fps) {
+static void say_signal(int on, unsigned w, unsigned h, double fps, double rate) {
     if (on)
-        fprintf(stderr, "{\"signal\": true, \"width\": %u, \"height\": %u, \"fps\": %.2f}\n", w, h, fps);
+        fprintf(stderr, "{\"signal\": true, \"width\": %u, \"height\": %u, \"fps\": %.2f, \"rate\": %.2f}\n", w, h,
+                fps, rate);
     else
         fprintf(stderr, "{\"signal\": false}\n");
     fflush(stderr);
@@ -191,8 +200,17 @@ static int locked(int subdev, struct v4l2_dv_timings *dv, double *fps) {
     return 1;
 }
 
+/* every is how many of the source's frames go to make one of the stream's: 2 when it sends a whole
+ * multiple of the rate asked for (60 or 59.94 for 30, 50 for 25), else 1 (its own rate). */
+static int every(double source, int want) {
+    int n = want > 0 ? (int)(source / want + 0.5) : 1;
+    double off = n > 0 ? source / n - want : 0;
+    return n >= 2 && off < want * 0.01 && off > -want * 0.01 ? n : 1;
+}
+
 /* ---- H.264 out: each keyframe with its SPS and PPS ---- */
 
+static FILE *video;         /* stdout as it was: Rockchip's library prints notes on stdout, which go to stderr */
 static uint8_t params[512]; /* the latest SPS and PPS, with their start codes */
 static size_t params_len;
 
@@ -219,12 +237,21 @@ static int write_frame(const uint8_t *p, size_t n) {
         memcpy(params, p + first_param, params_end - first_param);
         params_len = params_end - first_param;
     }
-    if (idr && !sps && params_len && fwrite(params, 1, params_len, stdout) != params_len) return -1;
-    if (fwrite(p, 1, n, stdout) != n || fflush(stdout) != 0) return -1;
+    if (idr && !sps && params_len && fwrite(params, 1, params_len, video) != params_len) return -1;
+    if (fwrite(p, 1, n, video) != n || fflush(video) != 0) return -1;
     return 0;
 }
 
 /* ---- Capture and encoding, for one signal ---- */
+
+static char problem[160]; /* what failed, for the log */
+
+/* failed says what failed: with errno, or with Rockchip's error code (rk, when it isn't 0). */
+static int failed(const char *what, int rk) {
+    if (rk) snprintf(problem, sizeof problem, "%s: Rockchip error 0x%x", what, (unsigned)rk);
+    else snprintf(problem, sizeof problem, "%s: %s", what, strerror(errno));
+    return -1;
+}
 
 struct capture {
     int video;
@@ -233,6 +260,8 @@ struct capture {
     int fd[BUFFERS];
     unsigned width, height;
     int encoding;
+    int every;       /* the source's frames for each of the stream's */
+    unsigned frames; /* the source's, so far */
 };
 
 static void stop_capture(struct capture *c) {
@@ -273,43 +302,50 @@ static int start_encoder(unsigned w, unsigned h, double fps, int kbps) {
     attr.stRcAttr.stH264Cbr.fr32DstFrameRateNum = rate, attr.stRcAttr.stH264Cbr.fr32DstFrameRateDen = 1;
     attr.stRcAttr.stH264Cbr.u32StatTime = 3;
     attr.stGopAttr.enGopMode = VENC_GOPMODE_NORMALP; /* I and P frames only */
-    if (RK_MPI_VENC_CreateChn(CHANNEL, &attr) != RK_SUCCESS) return -1;
+    RK_S32 r = RK_MPI_VENC_CreateChn(CHANNEL, &attr);
+    if (r != RK_SUCCESS) return failed("making the encoder", r);
     VENC_RECV_PIC_PARAM_S recv = {.s32RecvPicNum = -1};
-    if (RK_MPI_VENC_StartRecvFrame(CHANNEL, &recv) != RK_SUCCESS) {
+    if ((r = RK_MPI_VENC_StartRecvFrame(CHANNEL, &recv)) != RK_SUCCESS) {
         RK_MPI_VENC_DestroyChn(CHANNEL);
-        return -1;
+        return failed("starting the encoder", r);
     }
     return 0;
 }
 
-static int start_capture(struct capture *c, unsigned w, unsigned h, double fps, int kbps) {
-    c->width = w, c->height = h;
-    if ((c->video = open(VIDEO_DEV, O_RDWR | O_NONBLOCK)) < 0) return -1;
+static int start_capture(struct capture *c, unsigned w, unsigned h, double fps, int n, int kbps) {
+    c->width = w, c->height = h, c->every = n, c->frames = 0;
+    if ((c->video = open(VIDEO_DEV, O_RDWR | O_NONBLOCK)) < 0) return failed("opening " VIDEO_DEV, 0);
     struct v4l2_format fmt = {.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE};
     fmt.fmt.pix_mp.width = w, fmt.fmt.pix_mp.height = h;
     fmt.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_YUYV;
     fmt.fmt.pix_mp.field = V4L2_FIELD_NONE;
     fmt.fmt.pix_mp.num_planes = 1;
-    if (xioctl(c->video, VIDIOC_S_FMT, &fmt) < 0) return -1;
-    size_t size = fmt.fmt.pix_mp.plane_fmt[0].sizeimage ? fmt.fmt.pix_mp.plane_fmt[0].sizeimage : (size_t)w * h * 2;
+    if (xioctl(c->video, VIDIOC_S_FMT, &fmt) < 0) return failed("setting its format", 0);
+    struct v4l2_requestbuffers req = {.count = BUFFERS, .type = fmt.type, .memory = V4L2_MEMORY_DMABUF};
+    if (xioctl(c->video, VIDIOC_REQBUFS, &req) < 0) return failed("asking for buffers", 0);
+    if (req.count < BUFFERS) return errno = ENOMEM, failed("asking for buffers", 0);
+    /* Each buffer as big as the driver needs, which can be more than the picture (its height padded) */
+    struct v4l2_plane need = {0};
+    struct v4l2_buffer first = {.index = 0, .type = fmt.type, .memory = V4L2_MEMORY_DMABUF, .m.planes = &need, .length = 1};
+    if (xioctl(c->video, VIDIOC_QUERYBUF, &first) < 0) return failed("asking its buffers' size", 0);
+    size_t size = need.length ? need.length : (size_t)w * h * 2;
 
     MB_POOL_CONFIG_S pool = {.u64MBSize = size, .u32MBCnt = BUFFERS, .enRemapMode = MB_REMAP_MODE_NOCACHE,
                              .enAllocType = MB_ALLOC_TYPE_DMA, .enDmaType = MB_DMA_TYPE_CMA, .bPreAlloc = RK_TRUE};
-    if ((c->pool = RK_MPI_MB_CreatePool(&pool)) == MB_INVALID_POOLID) return -1;
-    struct v4l2_requestbuffers req = {.count = BUFFERS, .type = fmt.type, .memory = V4L2_MEMORY_DMABUF};
-    if (xioctl(c->video, VIDIOC_REQBUFS, &req) < 0 || req.count < BUFFERS) return -1;
+    if ((c->pool = RK_MPI_MB_CreatePool(&pool)) == MB_INVALID_POOLID) return failed("making the buffers", -1);
     for (int i = 0; i < BUFFERS; i++) {
         if (!(c->blk[i] = RK_MPI_MB_GetMB(c->pool, size, RK_TRUE)) || (c->fd[i] = RK_MPI_MB_Handle2Fd(c->blk[i])) < 0)
-            return -1;
+            return failed("taking a buffer", -1);
         struct v4l2_plane plane = {.m.fd = c->fd[i], .length = (unsigned)size};
         struct v4l2_buffer buf = {.index = (unsigned)i, .type = fmt.type, .memory = V4L2_MEMORY_DMABUF,
                                   .m.planes = &plane, .length = 1};
-        if (xioctl(c->video, VIDIOC_QBUF, &buf) < 0) return -1;
+        if (xioctl(c->video, VIDIOC_QBUF, &buf) < 0) return failed("handing it a buffer", 0);
     }
-    if (start_encoder(w, h, fps, kbps) < 0) return -1;
+    if (start_encoder(w, h, fps / n, kbps) < 0) return -1;
     c->encoding = 1;
     enum v4l2_buf_type type = fmt.type;
-    return xioctl(c->video, VIDIOC_STREAMON, &type);
+    if (xioctl(c->video, VIDIOC_STREAMON, &type) < 0) return failed("starting the stream", 0);
+    return 0;
 }
 
 /* encode_one takes a captured frame, encodes it and writes it out, and gives the buffer back.
@@ -319,6 +355,8 @@ static int encode_one(struct capture *c) {
     struct v4l2_buffer buf = {.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, .memory = V4L2_MEMORY_DMABUF,
                               .m.planes = &plane, .length = 1};
     if (xioctl(c->video, VIDIOC_DQBUF, &buf) < 0) return errno == EAGAIN ? 0 : -1;
+    if (c->frames++ % c->every) /* (not one of the stream's: straight back) */
+        return xioctl(c->video, VIDIOC_QBUF, &buf) < 0 ? -1 : 0;
     int result = 1;
     VIDEO_FRAME_INFO_S frame;
     memset(&frame, 0, sizeof frame);
@@ -352,6 +390,11 @@ int main(int argc, char **argv) {
     }
     if (kbps < 500 || kbps > 20000) kbps = 8000;
     signal(SIGPIPE, SIG_IGN); /* a write fails instead, and it stops */
+    int out = dup(STDOUT_FILENO);
+    if (out < 0 || !(video = fdopen(out, "wb")) || dup2(STDERR_FILENO, STDOUT_FILENO) < 0) {
+        fprintf(stderr, "Can't set up the output: %s\n", strerror(errno));
+        return 1;
+    }
 
     int subdev = open(SUBDEV, O_RDWR);
     if (subdev < 0) {
@@ -373,7 +416,7 @@ int main(int argc, char **argv) {
         struct v4l2_dv_timings dv;
         double rate;
         if (!locked(subdev, &dv, &rate)) {
-            if (said != 0) say_signal(0, 0, 0, 0), said = 0;
+            if (said != 0) say_signal(0, 0, 0, 0, 0), said = 0;
             struct pollfd p = {.fd = subdev, .events = POLLPRI};
             if (poll(&p, 1, 1000) > 0) {
                 struct v4l2_event ev;
@@ -381,13 +424,17 @@ int main(int argc, char **argv) {
             }
             continue;
         }
-        if (start_capture(&c, dv.bt.width, dv.bt.height, rate, kbps) < 0) {
-            fprintf(stderr, "Couldn't start capturing %ux%u: %s\n", dv.bt.width, dv.bt.height, strerror(errno));
+        int n = every(rate, fps);
+        if (start_capture(&c, dv.bt.width, dv.bt.height, rate, n, kbps) < 0) {
+            static char said_problem[sizeof problem]; /* (said once, not every second) */
+            if (strcmp(problem, said_problem) != 0)
+                fprintf(stderr, "Couldn't start capturing %ux%u, %s\n", dv.bt.width, dv.bt.height, problem);
+            strcpy(said_problem, problem);
             stop_capture(&c);
             sleep(1);
             continue;
         }
-        say_signal(1, dv.bt.width, dv.bt.height, rate), said = 1;
+        say_signal(1, dv.bt.width, dv.bt.height, rate, rate / n), said = 1;
         time_t last = time(NULL);
         for (;;) {
             struct pollfd p[2] = {{.fd = c.video, .events = POLLIN}, {.fd = subdev, .events = POLLPRI}};

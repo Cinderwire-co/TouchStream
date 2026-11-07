@@ -2,7 +2,7 @@
 // one), then writes a microSD card for each spoke, already paired with the hub.
 //
 //	TouchStream Installer                     the app
-//	TouchStream Installer write-card ...      writes one card (run by the app, as admin)
+//	TouchStream Installer write-card ...      writes one card (run by the app, as admin on Windows)
 //
 // TOUCHSTREAM_INSTALLER_DEV=1 is developer mode: disk images count as cards, an image file can be
 // picked, and TOUCHSTREAM_SOURCE installs the hub from a folder.
@@ -63,8 +63,8 @@ func main() {
 	}
 }
 
-// writeCard is the copy of the installer run as admin: it writes one card and reports through
-// the progress file, then exits.
+// writeCard writes one card and reports through the progress file: in the copy of the installer run
+// as admin on Windows (then it exits), or in the app itself.
 func writeCard(args []string) int {
 	flags := flag.NewFlagSet("write-card", flag.ContinueOnError)
 	cardFile := flags.String("card", "", "the card, as JSON")

@@ -2,18 +2,18 @@
 
 What's in the box, what its own software does, and how the spoke will use it. From Luckfox's published
 sources ([luckfox-eng29](https://github.com/luckfox-eng29): `kvm`, `kvm_video`, `kvm_display`, `kvm_system`) and the
-device tree in its system update (Sys 0.1.8). All of it still to be checked on the real box.
+device tree in its system update (Sys 0.1.8), then checked on the real box (see the end).
 
 ## The hardware, as Linux sees it
 
 | Part | Device | Notes |
 |---|---|---|
 | HDMI in: Toshiba TC358743 (I2C 0x0f, 4 CSI-2 lanes) | `/dev/video0`, `/dev/v4l-subdev2` | Frames as YUYV into DMA buffers; the subdevice has the timings, source-change events and the EDID |
-| HDMI sound: the TC358743's I2S into the RV1106's (capture only) | ALSA card `rockchip,hdmiin` | The TC358743 drives the bit and frame clocks |
+| HDMI sound: the TC358743's I2S into the RV1106's (capture only) | ALSA card 0, the only one: `rockchiphdmiin` on Luckfox's microSD system (Sys 0.1.8), `tc358743` on the factory eMMC system | The TC358743 drives the bit and frame clocks, from its reference clock: the RV1106's `mclk_ref_mipi0` (see the image) |
 | H.264/H.265 encoder | Rockchip's MPI (`librockit.so` in `/oem/usr/lib`) | 1080p60 is within its limit |
 | Screen: Sitronix ST7789V, 240×240 | `/dev/fb0`, 16-bit | Luckfox's UI turns it 180° in software |
 | Touch: Hynitron CST816S | `/dev/input/event0` | |
-| eMMC, microSD | `/dev/mmcblk0`, `/dev/mmcblk1` | `root=` in `/proc/cmdline` says which it booted from |
+| eMMC (8 GB), microSD | `/dev/mmcblk0`, `/dev/mmcblk1` | It starts from a card with a system on it, even with Luckfox's on the eMMC; `storagemedia=` in `/proc/cmdline` says which |
 
 Also on board: Ethernet (`eth0`, 10/100), ffmpeg 4.4 (with RTMP and RTMPS), `arecord`, `v4l2-ctl`, `media-ctl`,
 `evtest` and an SSH server.
@@ -30,6 +30,9 @@ Also on board: Ethernet (`eth0`, 10/100), ffmpeg 4.4 (with RTMP and RTMPS), `are
   - `kvm_audio` (no source published): Opus in RTP, 20 ms at 48 kHz, on `/var/run/kvm_audio.sock`.
   - `kvm_display`, in C with LVGL (GPL-2.0): the screen.
 - Updates go through Rockchip's `rk_ota`, with `update_system.tar` (`uboot.img`, `boot.img`, `system.img`).
+- The box comes with a newer system on its eMMC than the microSD image (built February 2026): its sound card is
+  named `tc358743`, its device tree gives the HDMI input 2 CSI-2 lanes (the microSD's has 4, which 1080p60 needs),
+  and its root password is `luckfox` with SSH and telnet open.
 
 ## What the spoke does with it
 
@@ -44,7 +47,7 @@ The spoke takes the place of all four apps: one Go program, plus a small capture
   frame rate, with 2-channel PCM sound, as an HDMI sink (`edid-decode` passes all five rates). `kvm_video` showed
   the devices and the sequence of calls; its GPL code isn't copied.
 - **Sound, and the stream**: for each signal, the box's ffmpeg takes the helper's H.264 and the sound from the
-  `hdmiin` card (ALSA: `hw:CARD=rockchiphdmiin`, to check on the box) as AAC, and makes the MPEG-TS the rest of the
+  sound card (ALSA: `hw:0`, the box's only one) as AAC, and makes the MPEG-TS the rest of the
   spoke uses (`media.Capture`). Its clocks carry on from the last one's, so the stream never runs backwards when the
   cable comes and goes. (`kvm_audio`'s Opus would need converting for YouTube anyway, and its source isn't
   published.) In the emulator, `SOURCE=hdmi` runs all of this with a stand-in helper playing the clip's H.264.
@@ -72,6 +75,25 @@ The spoke takes the place of all four apps: one Go program, plus a small capture
   free after `security`, and the block goes at 2880K (a 64 KiB boundary, in the first 64 MiB, where the installer
   looks); the partitions after it move down 96K. It starts `TOUCHSTREAM-PROVISION-V1` and a newline; the spoke reads
   it from `/dev/mmcblk1`.
+- The HDMI chip's reference clock goes to 27 MHz, in the device tree in both boot partitions. Luckfox's has the
+  RV1106 make 26 MHz, and the TC358743's driver only sets the chip's audio clock up right for 27 MHz (anything
+  else gets its 42 MHz setting): the sound came out 1.58 times too fast (a 1 kHz tone at 1,584 Hz, 10 seconds of
+  it in 15.9). 27 MHz is 594 MHz divided by 22, and the video link then comes out at exactly the 594 Mbps a lane
+  the device tree asks for (572 at 26 MHz). The boot partitions are FIT images whose parts are checked by
+  SHA-256 but not signed, so the device tree's hash is updated with it.
+- The screen is the spoke's from the start: `fbcon=map:1` on the kernel's command line (`sys_bootargs`) keeps the
+  kernel's console, and its boot logo and cursor, off it, and `/etc/init.d/S00touchstream-splash` puts TouchStream's
+  splash on it (`touchstream-spoke splash`) until the spoke's up. (The FIT's resource image has Rockchip's logos too,
+  for a bigger display: the ST7789V never shows them.)
+- **The installer's card puts the spoke on the box itself** (`spoke/internal/install`). Started from the card, the
+  start script runs `touchstream-spoke install`: the card's partitions go onto the eMMC at the same places, each
+  checked (the eMMC's own idblock and U-Boot stay: the card's are from Luckfox's image for the Lite, which has no
+  eMMC); the eMMC's data partition is made afresh with the spoke's settings (its pairing); then the eMMC's
+  environment (`mmcblk0`), last. The card's idblock is replaced with `TOUCHSTREAM-INSTALLED`, and the box starts
+  again, from the eMMC, whose start script makes that card one for recordings (`touchstream-spoke card`: one exFAT
+  partition from 16 MiB, "TouchStream") and mounts it over `recordings`. Other cards are left as they are (one
+  that's exFAT or FAT already is used as it is). `install -keep-card` leaves the card able to start the box, to try
+  the eMMC with it out; `/userdata/touchstream/stay-on-card` on a card keeps it running from the card.
 - Licenses: Rockchip's media libraries are proprietary, and shipped as part of the SDK; the GPL parts (the kernel,
   BusyBox) need their sources offered, as a link to the SDK revision the image is built from.
 
@@ -93,22 +115,26 @@ box's own ffmpeg 4.4:
 - The screen and touch drivers, with a file for the framebuffer (it matches the screen page) and a pipe for the touch
   (taps in the panel's own layout, turned round, open the recordings).
 
-## On the box, in order
+## Checked on the box (2026-11-07)
 
-1. **Does it boot from the card?** Its eMMC comes with a factory test image. Write Luckfox's microSD image
-   (`Luckfox-PicoKVM-Lite_MicroSD_Sys0.1.8_App0.1.4.img`, from the
-   [Google Drive folder](https://drive.google.com/drive/folders/1c_1EdF3fCocWYCSY2KlshBpRdEznSKzy) on their
-   [flashing page](https://wiki.luckfox.com/Luckfox-PicoKVM/Flash-image/): Drive refuses scripted downloads, so
-   use a browser) to a card, boot it, and check `/proc/cmdline` for `root=/dev/mmcblk1`. If it won't, the installer
-   writes the eMMC over USB instead (hold BOOT while plugging in).
-2. **HDMI sound**: `arecord -l`, then 10 seconds of a known tone from a computer
-   (`arecord -D hw:N -f S16_LE -r 48000 -c 2 tone.wav`): check its pitch and length. If it's fast, compare the rate
-   ALSA was asked for with the TC358743's audio settings, as it drives the clocks.
-3. **Capture**: `v4l2-ctl -d /dev/v4l-subdev2 --query-dv-timings` at 1080p30 and 1080p60, and `media-ctl -p`.
-4. **The encoder**: `touchstream-capture` (built by `spoke/capture/build`, in the image) at 1080p60 and 8 Mbps;
-   whether encoding a frame at a time keeps up at 60; CPU with the spoke running. It compiles with Luckfox's
-   toolchain and loads against the box's own libraries, which is as far as it goes without the box.
-5. **Screen and touch**: the spoke's screen on the panel, the right way up, and `evtest /dev/input/event0` at each
-   corner (that the touch is turned as the picture is).
-6. **ffmpeg**: what AAC at 128 kbps costs in CPU; RTMPS to YouTube.
-7. **The image**: build it, write it with the installer, and check it pairs itself at its first start.
+1. **It starts from the card**, with Luckfox's factory system still on its eMMC (`storagemedia=sd`,
+   `root=/dev/mmcblk1p9`), written by the installer, and pairs itself with the hub at its first start.
+2. **HDMI sound**: from a Mac, 1 kHz on the left and 1.5 kHz on the right, recorded with
+   `arecord -D hw:0 -f S16_LE -r 48000 -c 2`: at 26 MHz, 1,584 and 2,376 Hz, and 10 seconds took 15.9; at 27 MHz
+   (the image), 1,000.0 and 1,500.0 Hz, in 10.05 seconds, left and right the right way round.
+3. **Capture** at 1080p60 from a Mac: `touchstream-capture` asks the driver how big its buffers must be
+   (`VIDIOC_QUERYBUF`: more than the picture; a buffer of just the picture is refused, "Invalid argument"), and
+   keeps its own copy of stdout for the H.264, as Rockchip's library prints notes on stdout (they go to stderr).
+4. **The encoder** keeps up at 1080p60: 593 frames in 10 seconds, Main profile, no B-frames, with the helper at 3%
+   of the CPU.
+5. **CPU**, with 1080p60 coming in and the stream going to the hub: the helper 3%, ffmpeg (AAC, and the MPEG-TS)
+   27%, the spoke 17%, about 55% in all. The spoke drew its screen 20 times a second, at 71% of the CPU; now each
+   shape is rasterized over only its own box, letters are kept once shaped, the panel's pixels are packed row by
+   row, and it draws 4 times a second while nothing on it moves (20 while something does, and at once on a touch).
+   (Found with Go's profiler: `go build -tags pprof` serves it on port 6060.)
+6. **Installed on the eMMC** from the card (`install -keep-card`, 2026-11-07): the eMMC's environment and data
+   partition checked; starting from it with the card out, next. Luckfox's factory eMMC is backed up in
+   `.dev/backup/picokvm-emmc-factory` (its first 1347 MiB, MD5-checked against the box, and its data partition's
+   files).
+7. **Still to check**: touch at each corner, RTMPS straight to YouTube, the HDMI input's 1080p30 and other rates,
+   and memory with everything running.

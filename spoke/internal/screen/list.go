@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"golang.org/x/image/font"
-	"golang.org/x/image/vector"
 	"rsc.io/qr"
 
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/recorder"
@@ -74,7 +73,7 @@ func (s *Screen) show(v view) {
 
 func header(img *image.RGBA, name, right string) {
 	// Back: a chevron big enough to see, with a tap area far bigger (inBack)
-	fill(img, ash, func(z *vector.Rasterizer) {
+	fill(img, ash, func(z pen) {
 		z.MoveTo(20, 12)
 		z.LineTo(22.5, 14.5)
 		z.LineTo(17, 20)

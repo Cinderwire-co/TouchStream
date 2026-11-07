@@ -377,7 +377,9 @@ func (a *App) write(card cards.Card, img string, p *image.Provision) error {
 	if p != nil {
 		args = append(args, "--provision", filepath.Join(dir, "settings.json"))
 	}
-	if cards.Writable(card) { // a disk image of a developer's own: no admin rights needed
+	// A Mac's app writes the card itself (it asks for an admin's password as it opens it), as does any
+	// app for a disk image of a developer's own; Windows runs the writer as admin.
+	if runtime.GOOS == "darwin" || cards.Writable(card) {
 		if code := writeCard(args[1:]); code != 0 {
 			return lastError(progress)
 		}

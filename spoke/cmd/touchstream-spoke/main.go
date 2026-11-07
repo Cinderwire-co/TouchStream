@@ -6,6 +6,9 @@
 //	                      [-card FILE]                           read the installer's settings from FILE
 //	touchstream-spoke pair HUB CODE                               pair with a hub (code from Add spoke)
 //	touchstream-spoke unpair                                      forget the hub
+//	touchstream-spoke splash [-fb DEV]                            the splash on the box's screen (at startup)
+//	touchstream-spoke install [-keep-card] [-bootloader]          from the installer's card onto the box itself
+//	touchstream-spoke card                                        make the installer's card, once it's done, one for recordings
 //
 // Copyright (c) 2025 Will Reeves and TouchStream Contributors
 // Licensed under the MIT License - see LICENSE file for details
@@ -33,6 +36,7 @@ import (
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/direct"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/discovery"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/hub"
+	"github.com/Cinderwire-co/TouchStream/spoke/internal/install"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/media"
 	lcd "github.com/Cinderwire-co/TouchStream/spoke/internal/panel"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/provision"
@@ -56,10 +60,18 @@ func main() {
 	address := flags.String("address", "", "the address (and :port) phones reach this box at (default: its own)")
 	card := flags.String("card", "", "where the installer's settings are (default: the box's card)")
 	capture := flags.String("capture", "touchstream-capture", "the HDMI capture helper, and its flags")
-	audio := flags.String("audio", "-f alsa -ar 48000 -ac 2 -i hw:CARD=rockchiphdmiin", "ffmpeg's input for the HDMI sound")
+	audio := flags.String("audio", "-f alsa -ar 48000 -ac 2 -i hw:0", "ffmpeg's input for the HDMI sound (the box's only sound card)")
 	fb := flags.String("fb", "/dev/fb0", "the box's screen (a framebuffer), if it has one")
 	touch := flags.String("touch", "/dev/input/event0", "the box's touch (evdev), if it has one")
+	keepCard := flags.Bool("keep-card", false, "install: the card can still start the box (to try its own storage with the card out)")
+	bootloader := flags.Bool("bootloader", false, "install: the card's boot loader goes onto the box too")
 	_ = flags.Parse(args)
+	if command == "splash" { // (early in the box's startup: before its data partition's there)
+		if err := lcd.Show(*fb, screen.Splash("Starting…"), true); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
 	store, err := config.Open(*data)
 	if err != nil {
@@ -89,8 +101,33 @@ func main() {
 		}
 	case "unpair":
 		err = hub.Unpair(store)
+	case "install":
+		// Started from the installer's card: the spoke goes onto the box itself, paired as the card says
+		if did, perr := provision.Apply(store, provision.Devices); perr != nil {
+			log.Printf("the installer's settings on the card: %v", perr)
+		} else if did != "" {
+			log.Print(did)
+		}
+		say := func(line string) {
+			if !strings.HasPrefix(line, "Installing") {
+				log.Print(line)
+			}
+			_ = lcd.Show(*fb, screen.Splash(line), true)
+		}
+		say("Installing… 0%")
+		err = install.ToEMMC(install.Card, install.EMMC, *data, install.Options{Bootloader: *bootloader, KeepCard: *keepCard}, say)
+		if err == nil {
+			say("Starting again…")
+		} else {
+			say("Not installed: see the log")
+		}
+	case "card":
+		var did bool
+		if did, err = install.Recordings(install.Card); did {
+			log.Print("The installer's card is ready for recordings")
+		}
 	default:
-		err = fmt.Errorf("unknown command %q (run, pair or unpair)", command)
+		err = fmt.Errorf("unknown command %q (run, pair, unpair, splash, install or card)", command)
 	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatal(err)
@@ -134,7 +171,7 @@ func run(ctx context.Context, store *config.Store, data, source, address string,
 	go s.Watch(ctx)
 	go s.Uploader.Run(ctx)
 	go s.Link.Run(ctx)
-	go discovery.Beacon(ctx, store)
+	go keepGoing(ctx, "Beacon", func(ctx context.Context) error { return discovery.Beacon(ctx, store) })
 
 	mux := http.NewServeMux()
 	discovery.Routes(mux, store, spoke.Version)
@@ -165,11 +202,13 @@ func run(ctx context.Context, store *config.Store, data, source, address string,
 	screen.Routes(mux, panel)
 	// The box's own screen and touch, turned round as they are in the case (the emulator has
 	// neither: its screen is the /screen page)
+	display := &lcd.Display{Path: fb, Rotate180: true, Render: panel.Render}
 	if _, err := os.Stat(fb); err == nil {
-		go keepGoing(ctx, "The screen", (&lcd.Display{Path: fb, Rotate180: true, Render: panel.Render}).Run)
+		go keepGoing(ctx, "The screen", display.Run)
 	}
 	if _, err := os.Stat(touch); err == nil {
-		t := &lcd.Touch{Path: touch, Rotate180: true, Size: screen.Size, Down: panel.Down, Move: panel.Move, Up: panel.Up}
+		woke := func(on func(x, y int)) func(x, y int) { return func(x, y int) { on(x, y); display.Wake() } }
+		t := &lcd.Touch{Path: touch, Rotate180: true, Size: screen.Size, Down: woke(panel.Down), Move: woke(panel.Move), Up: woke(panel.Up)}
 		go keepGoing(ctx, "Touch", t.Run)
 	}
 	if replay != nil {

@@ -70,12 +70,12 @@ func reply(w http.ResponseWriter, code int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// Beacon announces the spoke on the LAN until ctx ends.
-func Beacon(ctx context.Context, store *config.Store) {
+// Beacon announces the spoke on the LAN until ctx ends, or the network isn't there (yet: the box can
+// start the spoke before its network's up).
+func Beacon(ctx context.Context, store *config.Store) error {
 	conn, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: net.IPv4bcast, Port: BeaconPort})
 	if err != nil {
-		log.Printf("Beacon: %v", err)
-		return
+		return err
 	}
 	defer conn.Close()
 	for {
@@ -88,7 +88,7 @@ func Beacon(ctx context.Context, store *config.Store) {
 		_, _ = conn.Write(payload)
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-time.After(beaconEvery):
 		}
 	}

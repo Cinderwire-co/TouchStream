@@ -1,6 +1,7 @@
-// Package elevate runs this program again with admin rights, for the one thing that needs them:
-// writing a card. The app itself stays an ordinary app (installing the hub for the person
-// using it, not for an admin account); the copy run as admin reports back through a file.
+// Package elevate runs this program again with admin rights on Windows, for the one thing that
+// needs them: writing a card. The app itself stays an ordinary app (installing the hub for the
+// person using it, not for an admin account); the copy run as admin reports back through a file.
+// (A Mac's app writes the card itself: it asks for an admin's password as it opens it, cards.Open.)
 //
 // Copyright (c) 2025 Will Reeves and TouchStream Contributors
 // Licensed under the MIT License - see LICENSE file for details
