@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -64,11 +65,16 @@ func (a *App) NeedsHomebrew() bool { return hubsetup.NeedsHomebrew() }
 
 func (a *App) HomebrewPackage() { wails.BrowserOpenURL(a.ctx, hubsetup.HomebrewPackage) }
 
+// release matches a released version (0.2.0), not a developer's build (0.1.0-dev).
+var release = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
+
 // InstallHub installs or updates the hub here, and returns the dashboard's address.
 func (a *App) InstallHub() (string, error) {
 	source := ""
 	if a.dev {
 		source = os.Getenv("TOUCHSTREAM_SOURCE")
+	} else if release.MatchString(Version) { // a released installer installs the hub of its own release
+		source = fmt.Sprintf("https://github.com/Cinderwire-co/TouchStream/archive/refs/tags/v%s.zip#subdirectory=hub", Version)
 	}
 	return hubsetup.Install(a.ctx, source, func(l hubsetup.Line) { wails.EventsEmit(a.ctx, "hub:line", l) })
 }
