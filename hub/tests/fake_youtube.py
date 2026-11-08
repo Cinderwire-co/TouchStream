@@ -26,6 +26,7 @@ polls = {}
 broadcasts = {}
 uploads = {}      # upload session -> {'meta', 'size', 'received'}
 videos = {}       # video id -> status
+stats_asked = {}  # video id -> times its numbers were asked for
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -114,6 +115,16 @@ class Handler(BaseHTTPRequestHandler):
             vid = f'video{next(ids)}'
             videos[vid] = {'privacyStatus': up['meta']['status']['privacyStatus'], 'uploadStatus': 'uploaded'}
             return self._send({'id': vid, 'snippet': up['meta']['snippet']})
+        if p == '/youtube/v3/videos' and method == 'GET' and 'statistics' in query.get('part', ''):
+            # Made-up numbers that grow each time they're asked for (stats.py), and live viewers while live
+            items = []
+            for n, vid in enumerate(query['id'].split(',')):
+                seen = stats_asked[vid] = stats_asked.get(vid, 0) + 1
+                live = vid in broadcasts   # (it never goes live by itself here, as YouTube's do)
+                items.append({'id': vid, 'statistics': {'viewCount': str(40 * seen + n), 'likeCount': str(3 * seen),
+                                                         'commentCount': str(seen)},
+                              **({'liveStreamingDetails': {'concurrentViewers': str(10 + seen)}} if live else {})})
+            return self._send({'items': items})
         if p == '/youtube/v3/videos' and method == 'GET':
             vid = query['id']
             status = videos.get(vid) or {'privacyStatus': 'public', 'uploadStatus': 'processed', 'embeddable': True,

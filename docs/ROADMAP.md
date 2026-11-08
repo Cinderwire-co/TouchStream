@@ -7,6 +7,8 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 
 ## Done recently
 
+- Views: each broadcast shows its views on YouTube (its live video, its edited video and its Shorts together), likes and comments, how many are watching while it's live and the peak after; Home adds up the last 30 days; the spoke's screen says how many are watching. Read from YouTube with the permission the hub already has (videos.list, one quota unit for up to 50 videos), every minute while live and less often as videos get older.
+- Shorts made by themselves: once a broadcast is transcribed, the assistant picks its best moments and the hub makes three Shorts of them, as drafts to look over (Settings > Recordings > Shorts).
 - Updates: the hub looks for new releases on GitHub and updates itself when nothing's live or due (or, with automatic updates off, says so on every page and waits for Update now); then it gives each spoke the matching version when it's idle. Spokes check each update was signed with TouchStream's release key, keep the version before, and go back to it if the new one can't reach the hub. A hub in Docker says when there's a new image instead. `tools/release` builds a release (the spoke's update, the card image, the Mac and Windows installers) and drafts it on GitHub.
 - Settings in sections (General, YouTube, Recordings, Brands, Assistant and API, Network), each with its own link; YouTube channels can be connected from Settings; disconnecting one gives the hub's access back to Google. Past broadcasts have Edit, Download and a More menu instead of six buttons; the editor and transcript lead back to the broadcast's page.
 - cinderwire.co/touchstream: TouchStream's page, with its privacy policy and terms (the YouTube API Services and Google's Limited Use wording, for Google's verification), not yet published.
@@ -190,12 +192,27 @@ Go live, End and Record, and recordings to phones by QR code. Still to come:
   - the assistant and AI agents running it, the API, and YouTube.
   - Start from the product-video templates in the ops repo.
 
+## The TouchStream app (an idea, 2026-11-07)
+
+TouchStream on a Mac or PC should feel like an app, not a website: the installer grows into **TouchStream.app**, which
+runs the hub in the background and opens the dashboard in its own window (no browser, no address or port to see), with
+a menu-bar or tray icon, notifications (live, ended, an update ready), the recordings as files you can drag out and
+open, and Add spoke writing the card right there. Phones and other computers still reach the dashboard on the network
+(Hub address). The installer is already Wails (Go and a web page), so the window and the files come from there.
+
+## Distribution
+
+- **YouTube sign-in built in**: ship Cinderwire's Google OAuth client with the hub, so Connect channel works without
+  making one (your own stays an option). Needs Google's verification to finish, a YouTube API quota increase (every
+  hub would share one project's daily quota), and the owner's OK to publish its client secret (normal for TV and
+  device sign-in clients, which Google doesn't treat as confidential).
+- **Signed installers**: the Mac one with the Developer ID and notarized (`installer/tools/release-mac`; needs a
+  notarytool keychain profile), the Windows one with a code-signing certificate (Microsoft's Trusted Signing, or an
+  OV certificate), so neither warns on first open. 0.1.0 shipped unsigned.
+
 ## Before release
 
 - Parts list with links: the PicoKVM (with its screen), a microSD card, a power supply, and a travel router for Wi-Fi.
 - No default passwords anywhere.
-- Ship the SIL Open Font License with the Bricolage Grotesque and JetBrains Mono fonts (in
-  `spoke/internal/assets/files`); the OFL requires it to travel with the fonts.
-- Make the GHCR image public.
 - Revisit the license (MIT for now; the goal is to keep the Cinderwire branding and stop rebranded forks).
 - Real-world tests: a real HDMI source and audio (including 50, 60 and 29.97 fps sources), a real YouTube channel, and the QR download on Android and iPhone.

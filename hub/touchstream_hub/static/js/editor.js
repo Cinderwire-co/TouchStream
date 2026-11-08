@@ -6,7 +6,7 @@
 // left, the viewer beside them, the timeline underneath (timeline.js); the Shorts tab makes vertical
 // shorts of moments of the same recording.
 import { html, useState, useEffect, useRef } from '../vendor/preact-htm.module.js';
-import { api, ago, bytes, hubEnv, reveal, revealLabel, usePoll } from './lib.js';
+import { api, ago, bytes, hubEnv, reveal, revealLabel, usePoll, viewsLabel } from './lib.js';
 import { Avatar, Icon, IconButton, Modal } from './ui.js';
 import { Select } from './fields.js';
 import { ask, confirmAction, toast, useLeaveGuard } from './dialogs.js';
@@ -109,7 +109,7 @@ function EditedVideo({ edit, event, channels, changed, refresh }) {
       ${working && html`<div class="progress"><i style=${`width:${Math.round(edit.progress * 100)}%`}></i></div>`}
       ${edit.published.length > 0 && html`<div class="published">${edit.published.map((p) => html`<a href=${p.url} target="_blank"
         rel="noopener" class=${p.at < edit.created_at ? 'earlier' : ''}>${p.channel}${p.at < edit.created_at ? ' · earlier cut' : ''}${
-        p.hidden ? ` · ${p.hidden}` : ''} ↗</a>`)}</div>`}
+        p.hidden ? ` · ${p.hidden}` : ''}${p.stats ? ` · ${viewsLabel(p.stats.views)}` : ''} ↗</a>`)}</div>`}
     </div>
     ${edit.status === 'done' && html`<div class="version-actions">
       ${channels.length > 0 && html`<button class="btn small" onClick=${() => setPublishing(true)}>Publish</button>`}

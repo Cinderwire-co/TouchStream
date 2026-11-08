@@ -258,6 +258,12 @@ class YouTube:
     def delete_broadcast(self, channel, broadcast_id):
         self._call(channel, 'DELETE', 'liveBroadcasts', params={'id': broadcast_id})
 
+    def video_stats(self, channel, video_ids):
+        """View, like and comment counts, and live viewers, of up to 50 videos (one quota unit)."""
+        data = self._call(channel, 'GET', 'videos', params={'part': 'statistics,liveStreamingDetails',
+                                                             'id': ','.join(video_ids[:50]), 'maxResults': 50})
+        return data.get('items', [])
+
     def broadcast_states(self, channel, broadcast_ids):
         """broadcast id -> lifeCycleStatus (created, ready, testing, live, complete, revoked)."""
         data = self._call(channel, 'GET', 'liveBroadcasts',

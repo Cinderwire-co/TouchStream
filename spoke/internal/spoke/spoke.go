@@ -59,6 +59,7 @@ type Spoke struct {
 	updating   string    // the version being put on the box, while it is
 	progress   float64   // how much of it has arrived, 0 to 1
 	updateErr  string    // why the last update didn't go on
+	viewers    *int      // watching on YouTube, as the hub last said
 	cpu        cpuSampler
 }
 
@@ -154,6 +155,7 @@ func (s *Spoke) Apply(d *hub.Desired) {
 		s.liveSince = time.Now()
 	}
 	s.mode = d.Mode
+	s.viewers = d.Viewers
 	if s.pending == d.Mode || time.Since(s.asked) > pendingFor {
 		s.pending = ""
 	}
@@ -340,6 +342,7 @@ type State struct {
 	IP         string
 	Uploading  string
 	Updating   string // the version going on the box, while it is
+	Viewers    *int   // watching on YouTube, while it's live (nil: not known)
 }
 
 func (s *Spoke) State(ip string) State {
@@ -357,7 +360,7 @@ func (s *Spoke) State(ip string) State {
 		Uplink: up, LiveSince: s.liveSince, Pending: s.pending, Problem: problem,
 		Direct: s.Direct.Active(), DirectNow: s.Direct.State(), HubNow: s.Link.State(), Keys: len(c.Destinations),
 		Recording: s.Recorder.Recording(), RecordedAt: s.recordedAt, Manual: !s.manual.IsZero(),
-		IP: ip, Uploading: s.Uploader.Status(), Updating: s.updating,
+		IP: ip, Uploading: s.Uploader.Status(), Updating: s.updating, Viewers: s.viewers,
 	}
 }
 
@@ -375,8 +378,8 @@ func (s *Spoke) Status() map[string]any {
 	}
 	status := map[string]any{
 		"schedule_kept": kept,
-		"update": upd, "update_error": nilIfEmpty(updateErr), "update_failed": nilIfEmpty(update.Failed(s.Data)),
-		"version":       Version, "model": "picokvm", "framerates": Rates, "signal": sig.Present,
+		"update":        upd, "update_error": nilIfEmpty(updateErr), "update_failed": nilIfEmpty(update.Failed(s.Data)),
+		"version": Version, "model": "picokvm", "framerates": Rates, "signal": sig.Present,
 		"signal_label": nil, "signal_fps": nil, "stream_fps": nil, "framerate": nonEmpty(s.Store.Get().Framerate, "30"),
 		"source": nil, "test_pattern": false, "test_pattern_at": 0,
 		"temp": cpuTemp(), "cpu": s.cpu.percent(), "mode": nonEmpty(mode, "off"), "network": "Ethernet",

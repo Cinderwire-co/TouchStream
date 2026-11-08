@@ -34,6 +34,9 @@ export async function api(method, path, body, { raw } = {}) {
   return data;
 }
 
+/** 1234 -> "1.2K" */
+export const compact = (n) => new Intl.NumberFormat([], { notation: 'compact', maximumFractionDigits: 1 }).format(n || 0);
+export const viewsLabel = (n) => `${compact(n)} view${n === 1 ? '' : 's'}`;
 export const bytes = (n) => n > 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n > 1e6 ? `${(n / 1e6).toFixed(0)} MB` : `${Math.ceil(n / 1e3)} KB`;
 export const when = (t) => new Date(t * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 export const clock = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });

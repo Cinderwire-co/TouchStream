@@ -33,10 +33,11 @@ from .mediamtx import MediaMTX
 from .restream import Restreamer
 from .retention import Retention
 from .series import WEEKS, Series, zone
-from .shorts import Shorts, sentences
+from .shorts import AVAILABLE as SHORTS_AVAILABLE, Shorts, sentences
 from .speedtest import SpeedTest
 from .transcribe import MODELS, Transcriber, remap, to_srt, to_txt, to_vtt
 from .youtube import YouTube, YouTubeError
+from .stats import Stats
 from .updates import UpdateError, Updates
 
 STATIC = Path(__file__).parent / 'static'
@@ -69,6 +70,7 @@ class Hub:
     shorts: Shorts
     discovery: discovery.Discovery
     updates: Updates
+    stats: Stats
     http: httpx.AsyncClient
     pairing: dict         # code -> expiry time
     pair_failures: dict   # client ip -> [failure times]
@@ -114,11 +116,15 @@ async def lifespan(app):
     hub.assistant = Assistant(hub.db)
     hub.updates = Updates(hub.db)
     hub.updates.start(busy=busy_with)
+    hub.stats = Stats(hub.db, hub.youtube)
+    hub.stats.start()
     hub.http = httpx.AsyncClient(timeout=10)
     hub.pairing, hub.pair_failures = {}, {}
     print(f"TouchStream Hub {VERSION} - data in {settings.DATA_DIR}")
+    shorts_task = asyncio.create_task(make_shorts_by_themselves())
     async with mcp_server.server.session_manager.run():   # the MCP endpoint, for AI agents
         yield
+    shorts_task.cancel()
     hub.restreamer.stop_all()
     hub.mtx.stop()
     await hub.http.aclose()
@@ -381,7 +387,7 @@ def overview():
     recent = hub.db.all("SELECT * FROM events WHERE state = 'ended' ORDER BY start_at DESC LIMIT 4")
     return {'storage': {'free': disk.free, 'total': disk.total, 'folder': str(root),
                         'recordings': _recordings_size['bytes'], 'broadcasts': _recordings_size['broadcasts']},
-            'speed': hub.speedtest.state(),
+            'speed': hub.speedtest.state(), 'views': hub.stats.summary(),
             'recent': [event_view(e, hub.library.event_copies(e)) for e in recent]}
 
 
@@ -632,7 +638,8 @@ def event_view(event, copies=None):
                         'channel_thumbnail': channel_picture_url({'thumbnail': t['channel_thumbnail']}, t['channel_id']),
                         'broadcast_id': bid, 'error': t['error'],
                         'watch_url': f'https://youtu.be/{bid}' if bid else None,
-                        'studio_url': f'https://studio.youtube.com/video/{bid}/livestreaming' if bid else None})
+                        'studio_url': f'https://studio.youtube.com/video/{bid}/livestreaming' if bid else None,
+                        'stats': hub.stats.for_video(bid) if bid else None})
     series = hub.series.get(event['series_id']) if event['series_id'] else None
     spoke = hub.db.spoke(event['spoke_id'])
     # Whether the spoke has it in the schedule it keeps, to go straight to YouTube if the hub is down
@@ -651,6 +658,7 @@ def event_view(event, copies=None):
             'transcript': hub.db.one('SELECT status, progress, edited, language FROM transcripts WHERE event_id = ?',
                                      event['id']),
             'shorts': hub.db.one('SELECT COUNT(*) AS n FROM shorts WHERE event_id = ?', event['id'])['n'],
+            'stats': hub.stats.for_event(event['id']),
             'thumbnail_url': f"/api/events/{event['id']}/thumbnail?v={event['thumbnail']}" if event['thumbnail'] else None}
 
 
@@ -962,9 +970,14 @@ def delete_series(series_id: int, keep: int = 0):
 
 
 # ---- Editing (hub only) ----
+def with_views(published):
+    """Published uploads, each with its numbers from YouTube (stats.py)."""
+    return [{**p, 'stats': hub.stats.for_video(p['video_id']) if p.get('video_id') else None} for p in published or []]
+
+
 def edit_view(edit):
-    return {k: edit[k] for k in ('id', 'event_id', 'source', 'spec', 'status', 'progress', 'duration',
-                                 'output', 'error', 'published', 'created_at')}
+    return {**{k: edit[k] for k in ('id', 'event_id', 'source', 'spec', 'status', 'progress', 'duration',
+                                    'output', 'error', 'created_at')}, 'published': with_views(edit['published'])}
 
 
 def _event_copies(event):
@@ -1000,6 +1013,51 @@ def editor_status(event_id: int):
         raise HTTPException(404)
     edit = hub.editor.current(event_id)
     return {'edit': edit_view(edit) if edit else None, 'shorts': [short_view(s) for s in hub.shorts.for_event(event_id)]}
+
+
+AUTO_SHORTS = 3          # Shorts the hub makes of a broadcast by itself, unless Settings says otherwise
+SHORT_LOOK = {'framing': 'fill', 'style': 'bold', 'accent': 'ember', 'trim_pauses': True}   # (as the editor's)
+
+
+async def make_shorts_by_themselves():
+    """Once a broadcast is transcribed, the assistant picks its best moments and the hub makes Shorts of them,
+    the editor's way: vertical, following the speaker, captions, no pauses. They're drafts to look over: nothing is
+    published by itself. Needs the assistant (an OpenRouter key); Settings > Recordings turns it off."""
+    await asyncio.sleep(90)
+    while True:
+        try:
+            if hub.db.get_setting('shorts_auto', True) and hub.assistant.enabled() and SHORTS_AVAILABLE:
+                for row in hub.db.all("SELECT t.event_id FROM transcripts t JOIN events e ON e.id = t.event_id "
+                                      "WHERE t.status = 'done' AND t.auto_shorts_at IS NULL AND e.state = 'ended' "
+                                      "AND COALESCE(e.ended_at, e.end_at, e.start_at) > ?", time.time() - 3 * 86400):
+                    await shorts_for(row['event_id'])
+        except Exception as e:  # never let the loop die
+            print(f'Making Shorts: {e}')
+        await asyncio.sleep(120)
+
+
+async def shorts_for(event_id):
+    hub.db.run('UPDATE transcripts SET auto_shorts_at = ? WHERE event_id = ?', time.time(), event_id)   # once, come what may
+    event, transcript = hub.broadcasts.event(event_id), hub.transcriber.transcript(event_id)
+    if not event or not transcript or hub.shorts.for_event(event_id):   # (some made by hand already: leave it be)
+        return
+    try:
+        moments = await hub.assistant.suggest_moments(event['title'], sentences(transcript['segments']))
+    except AssistantError as e:
+        print(f"Shorts of {event['title']}: {e}")
+        return
+    hub.db.run('UPDATE transcripts SET suggestions = ? WHERE event_id = ?', json.dumps(
+        {'moments': moments, 'model': hub.assistant.config()['model'], 'made_at': time.time()}), event_id)
+    count = int(hub.db.get_setting('shorts_auto_count', AUTO_SHORTS))
+    for m in moments[:count]:
+        try:
+            hub.shorts.create(event, (m['title'] or event['title'])[:100],
+                              {'source': transcript['source'], 'start': m['start'], 'end': m['end'], **SHORT_LOOK})
+        except ValueError as e:
+            print(f"A Short of {event['title']}: {e}")
+    made = min(count, len(moments))
+    if made:
+        print(f"Made {made} Short{'s' if made > 1 else ''} of {event['title']}")
 
 
 @app.post('/api/events/{event_id}/suggestions', dependencies=[Depends(admin)])
@@ -1277,8 +1335,8 @@ def download_transcript(event_id: int, fmt: str, edit: int = 0):
 
 # ---- Shorts (hub only) ----
 def short_view(short):
-    return {k: short[k] for k in ('id', 'event_id', 'title', 'spec', 'status', 'progress', 'duration', 'output',
-                                  'error', 'published', 'created_at')}
+    return {**{k: short[k] for k in ('id', 'event_id', 'title', 'spec', 'status', 'progress', 'duration', 'output',
+                                     'error', 'created_at')}, 'published': with_views(short['published'])}
 
 
 def _short(short_id):
@@ -1541,7 +1599,10 @@ def get_settings(request: Request):
             'data_dir': str(settings.DATA_DIR), 'install': hub.updates.kind, 'password_from_env': bool(settings.ADMIN_PASSWORD),
             'recordings_folder': str(hub.library.root()), 'recordings_folder_default': str(settings.RECORDINGS_FOLDER),
             'local': is_local(request), 'platform': desktop.PLATFORM, 'docker': settings.IN_DOCKER,
-            'transcription': {**hub.transcriber.options(), 'models': MODELS}}
+            'transcription': {**hub.transcriber.options(), 'models': MODELS},
+            'shorts_auto': {'on': bool(hub.db.get_setting('shorts_auto', True)),
+                            'count': int(hub.db.get_setting('shorts_auto_count', AUTO_SHORTS)),
+                            'assistant': hub.assistant.enabled(), 'available': SHORTS_AVAILABLE}}
 
 
 @app.patch('/api/settings', dependencies=[Depends(admin)])
@@ -1571,6 +1632,13 @@ def update_settings(data: dict = Body()):
         hub.db.set_setting('transcribe_language', str(data['transcribe_language'])[:8])
     if 'transcribe_vocabulary' in data:
         hub.db.set_setting('transcribe_vocabulary', str(data['transcribe_vocabulary'])[:500])
+    if 'shorts_auto' in data:
+        hub.db.set_setting('shorts_auto', bool(data['shorts_auto']))
+    if 'shorts_auto_count' in data:
+        try:
+            hub.db.set_setting('shorts_auto_count', max(1, min(6, int(data['shorts_auto_count']))))
+        except (TypeError, ValueError):
+            raise HTTPException(400, 'How many Shorts: 1 to 6')
     return {'ok': True}
 
 
@@ -1918,6 +1986,7 @@ def heartbeat(request: Request, status: dict = Body(), spoke: dict = Depends(spo
             'bitrate_kbps': spoke['bitrate_kbps'], 'record_local_pref': spoke['record_local'],
             'framerate': spoke['framerate'], 'time_zone': spoke['time_zone'],
             'update': hub.updates.spoke_offer(spoke, status, spoke_idle(spoke, status)),
+            'viewers': hub.stats.watching_on(spoke['id']),   # watching on YouTube, while it's live: for its screen
             **spoke_schedule(spoke)}
 
 

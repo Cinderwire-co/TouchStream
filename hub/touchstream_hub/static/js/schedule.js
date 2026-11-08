@@ -1,6 +1,6 @@
 // Scheduling: agenda, broadcast editor (one-off or recurring), connected YouTube channels
 import { html, useState, useEffect } from '../vendor/preact-htm.module.js';
-import { api, bytes, clock, dayLabel, hubEnv, reveal, revealLabel, until, usePoll, useNow, MARK } from './lib.js';
+import { api, bytes, clock, compact, dayLabel, hubEnv, reveal, revealLabel, until, usePoll, useNow, viewsLabel, MARK } from './lib.js';
 import { Avatar, Icon, IconButton, Modal, Preview, Switch } from './ui.js';
 import { Chips, DateField, Select, TimeField, isoDate, joinTime, lengthLabel, splitTime, weekStart } from './fields.js';
 import { ask, confirmAction, toast } from './dialogs.js';
@@ -432,6 +432,15 @@ const endNow = async (event, refresh) => (await confirmAction({ title: `End "${e
   message: 'The stream stops on every channel.', confirm: 'End broadcast', danger: true }))
   && api('POST', `/api/events/${event.id}/end`).then(refresh).catch(toast);
 
+/** How it's doing on YouTube: watching now while it's live, then its views (broadcast, edits and Shorts together). */
+function ViewsChip({ stats, live }) {
+  if (!stats) return null;
+  if (live && stats.watching != null) return html`<span class="chip live" title="Watching on YouTube now">${compact(stats.watching)} watching</span>`;
+  return html`<span class="chip" title=${`Views on YouTube: ${compact(stats.live_views)} of the broadcast${stats.edit_views
+    ? `, ${compact(stats.edit_views)} of the edited video` : ''}${stats.shorts_views ? `, ${compact(stats.shorts_views)} of its Shorts` : ''}`}>
+    <${Icon} name="eye" size=${12} /> ${compact(stats.views)}</span>`;
+}
+
 function StateChip({ event }) {
   return event.state === 'live' ? html`<span class="chip live">● Live</span>`
     : event.state === 'ended' ? html`<span class="chip">${event.started_at || event.recordings.some((c) => c.source === 'hub')
@@ -479,6 +488,7 @@ function EventRow({ event, spoke, showSpoke, onEdit, refresh }) {
           ${t.watch_url && html`<a href=${t.watch_url} target="_blank" rel="noopener" title="Watch"><${Icon} name="external" size=${13} /></a>`}
         </span>`)}
         ${event.targets.length === 0 && event.state !== 'planned' && html`<span class="muted small">${event.adhoc ? 'Went live from the dashboard' : 'Record only'}</span>`}
+        <${ViewsChip} stats=${event.stats} live=${event.state === 'live'} />
       </div>
       ${errors.length > 0 && html`<p class="error small">${errors[0].channel}: ${errors[0].error}</p>`}
     </div>
@@ -651,11 +661,22 @@ export function BroadcastPage({ id }) {
           <h3>YouTube</h3>
           ${event.targets.map((t) => html`<div class="target">
             <div class="target-head"><${Avatar} channel=${t} size=${22} /><b>${t.channel}</b></div>
+            ${t.stats && html`<div class="numbers">
+              ${event.state === 'live' && t.stats.watching != null ? html`<span><b>${compact(t.stats.watching)}</b> watching now</span>` : ''}
+              <span><b>${compact(t.stats.views)}</b> ${t.stats.views === 1 ? 'view' : 'views'}</span>
+              <span><b>${compact(t.stats.likes)}</b> ${t.stats.likes === 1 ? 'like' : 'likes'}</span>
+              <span><b>${compact(t.stats.comments)}</b> ${t.stats.comments === 1 ? 'comment' : 'comments'}</span>
+              ${event.state !== 'live' && t.stats.peak_viewers ? html`<span><b>${compact(t.stats.peak_viewers)}</b> watching at its peak</span>` : ''}
+            </div>`}
             ${t.error ? html`<p class="error small">${t.error}</p>` : html`<div class="links small">
               ${t.watch_url && html`<a href=${t.watch_url} target="_blank" rel="noopener">Watch <${Icon} name="external" size=${12} /></a>`}
               ${t.studio_url && html`<a href=${t.studio_url} target="_blank" rel="noopener">YouTube Studio <${Icon} name="external" size=${12} /></a>`}
             </div>`}
           </div>`)}
+          ${event.stats && (event.stats.edit_views || event.stats.shorts_views) ? html`<p class="muted small">${[
+            event.stats.edit_views && `The edited video: ${viewsLabel(event.stats.edit_views)}`,
+            event.stats.shorts_views && `its Shorts: ${viewsLabel(event.stats.shorts_views)}`].filter(Boolean).join(' · ')}.
+            ${' '}${viewsLabel(event.stats.views)} in all.</p>` : ''}
           ${!event.targets.length && html`<p class="muted small">${event.adhoc ? 'Went live from the dashboard, to its stream keys.'
             : 'Record only: the hub records it, plus the spoke’s own copy.'}</p>`}
         </div>

@@ -734,3 +734,6 @@ details.other-recordings[open] > summary { margin-bottom: 4px; }
 .spoke-layout + .panel { margin-top: 18px; }
 @media (max-width: 640px) { .hide-narrow { display: none; } }
 details.other-recordings > summary::before { font-size: 24px; color: var(--smoke); margin-right: 4px; }
+.target .numbers { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 6px 32px; font-size: 13px; color: var(--smoke); }
+.target .numbers b { color: var(--ash); font-weight: 600; }
+.section-head .muted svg { vertical-align: -2px; }

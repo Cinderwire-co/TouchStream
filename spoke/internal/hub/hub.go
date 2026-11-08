@@ -42,15 +42,16 @@ type Stream struct {
 // Desired is what the hub asks of the spoke on every heartbeat, and the schedule the spoke keeps
 // in case the hub goes out of reach.
 type Desired struct {
-	Name        string   `json:"name"`
-	Location    string   `json:"location"`
-	Mode        string   `json:"mode"` // off, preview or live
-	RecordLocal bool     `json:"record_local"`
-	Stream      *Stream  `json:"stream"`
-	Commands    []string `json:"commands"`
-	Framerate   string   `json:"framerate"`
-	TimeZone    string   `json:"time_zone"` // "": where the spoke finds itself to be
-	Update      *update.Offer `json:"update"` // a newer spoke, when the hub has one for it and it's idle
+	Name        string        `json:"name"`
+	Location    string        `json:"location"`
+	Mode        string        `json:"mode"` // off, preview or live
+	RecordLocal bool          `json:"record_local"`
+	Stream      *Stream       `json:"stream"`
+	Commands    []string      `json:"commands"`
+	Framerate   string        `json:"framerate"`
+	TimeZone    string        `json:"time_zone"` // "": where the spoke finds itself to be
+	Update      *update.Offer `json:"update"`    // a newer spoke, when the hub has one for it and it's idle
+	Viewers     *int          `json:"viewers"`   // watching on YouTube, while it's live (nil: not known)
 	direct.Plan
 }
 

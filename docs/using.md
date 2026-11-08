@@ -59,7 +59,12 @@ Aired broadcasts are under **Schedule > Past**, each with:
     upload.
 - **Transcript**: speech to text, made on the hub. Correct anything it misheard, then download captions (.srt, .vtt)
   for YouTube Studio. Captions for the edited video follow its cuts.
-- **Shorts**: vertical videos of one moment, for YouTube Shorts, Instagram Reels and TikTok (see below).
+- **Shorts**: vertical videos of one moment, for YouTube Shorts, Instagram Reels and TikTok (see below). With the
+  assistant on, the hub makes some by itself (below).
+- **Views**: how it's doing on YouTube. Each broadcast shows its views (its live video's, its edited video's and its
+  Shorts' together), likes and comments; while it's live, how many are watching, which the spoke's screen shows
+  too; afterwards, the most that watched at once. Home adds up the views of the last 30 days. The hub reads them from
+  YouTube every minute while live, then less often as a video gets older.
 
 On the hub's computer, the folder button opens the broadcast's folder. Each broadcast gets one, like
 `2026-11-08 Sunday Service`, with:
@@ -104,6 +109,11 @@ Properties on the left, the picture beside them, the timeline underneath, with t
 - the YouTube channels it's for. The editor starts their broadcasts with it.
 
 ## Shorts
+
+**Made by themselves**: once a broadcast is transcribed, the assistant picks its best moments and the hub makes
+Shorts of them (three to begin with), vertical, following the speaker, with captions and no pauses. They wait on
+the broadcast for you to look over and publish; nothing is published by itself. **Settings > Recordings > Shorts**
+turns it off or changes how many. It needs the assistant's OpenRouter key.
 
 **Shorts** on an aired broadcast (or **Make a short** on its transcript) opens the editor's Shorts tab:
 

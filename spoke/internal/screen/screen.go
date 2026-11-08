@@ -25,6 +25,7 @@ import (
 	"image/color"
 	"image/draw"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -565,6 +566,9 @@ func streamLine(st spoke.State) string {
 	}
 	switch st.Uplink {
 	case "sending":
+		if st.Viewers != nil {
+			return fmt.Sprintf("%s watching on YouTube", count(*st.Viewers))
+		}
 		return "Sending to hub"
 	case "retrying":
 		return "Can't reach the hub · retrying"
@@ -580,4 +584,16 @@ func waiting(line string) bool {
 func clock(d time.Duration) string {
 	s := max(int(d.Seconds()), 0)
 	return fmt.Sprintf("%d:%02d:%02d", s/3600, s/60%60, s%60)
+}
+
+// count: 950, 1.2K, 34K: short enough for the screen.
+func count(n int) string {
+	switch {
+	case n < 1000:
+		return strconv.Itoa(n)
+	case n < 10000:
+		return strings.TrimSuffix(strconv.FormatFloat(float64(n)/1000, 'f', 1, 64), ".0") + "K"
+	default:
+		return strconv.Itoa(n/1000) + "K"
+	}
 }

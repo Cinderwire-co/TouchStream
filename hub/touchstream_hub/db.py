@@ -184,6 +184,18 @@ CREATE TABLE IF NOT EXISTS access_requests (
     created_at REAL NOT NULL,
     expires_at REAL NOT NULL
 );
+-- How each video the hub put on YouTube is doing (stats.py): a broadcast's, an edit's or a Short's
+CREATE TABLE IF NOT EXISTS video_stats (
+    video_id TEXT PRIMARY KEY,
+    channel_id INTEGER,
+    event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,                         -- broadcast | edit | short
+    views INTEGER, likes INTEGER, comments INTEGER,
+    watching INTEGER,                           -- watching now, while it's live
+    peak_viewers INTEGER,                       -- the most the hub saw watching it live
+    made_at REAL,
+    updated_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS event_targets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
@@ -196,6 +208,8 @@ CREATE TABLE IF NOT EXISTS event_targets (
 
 # Columns added after the first release: (table, column, definition)
 MIGRATIONS = [
+    # When the hub made Shorts of this broadcast by itself (app.py make_shorts_by_themselves): once each
+    ('transcripts', 'auto_shorts_at', 'REAL'),
     ('spokes', 'test_pattern', 'INTEGER NOT NULL DEFAULT 0'),
     ('spokes', 'test_pattern_at', 'REAL NOT NULL DEFAULT 0'),
     # Set when YouTube created this destination for a connected channel
