@@ -216,11 +216,25 @@ class Library:
                     source = ['-f', 'concat', '-safe', '0', '-i', str(listing)]
                 else:
                     source = ['-i', str(held[0][1])]
+                stream = target.with_name(f'.{target.name}.ts')
+                if kind == 'hub':
+                    # The hub's own recording begins with stand-in H.264 settings in its header (MediaMTX
+                    # writes it before it has seen the stream's), which players warn about. Through MPEG-TS,
+                    # the header is made again from the settings in the stream itself; not re-encoded.
+                    passed = subprocess.run(
+                        [settings.FFMPEG_BIN, '-hide_banner', '-loglevel', 'error', '-y', *source,
+                         '-map', '0:v:0', '-map', '0:a?', '-c', 'copy', '-f', 'mpegts', str(stream)],
+                        capture_output=True, text=True)
+                    if passed.returncode == 0:
+                        source = ['-i', str(stream)]
+                    else:
+                        print(f"Remaking the hub recording's header failed, filing it as it is: {passed.stderr.strip()}")
                 inputs, embed = self.embed_args(event, 1)
                 result = subprocess.run(
                     [settings.FFMPEG_BIN, '-hide_banner', '-loglevel', 'error', '-y', *source, *inputs,
                      '-map', '0:v:0', '-map', '0:a?', '-c', 'copy', *embed, '-movflags', '+faststart',
                      '-f', 'mp4', str(partial)], capture_output=True, text=True)
+                stream.unlink(missing_ok=True)
             if result.returncode != 0:
                 print(f"Filing {kind} recording of broadcast {event['id']} failed: {result.stderr.strip()}")
                 partial.unlink(missing_ok=True)

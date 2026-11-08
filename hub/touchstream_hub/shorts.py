@@ -238,10 +238,10 @@ class Shorts:
             raise ValueError(f'A short needs at least {MIN_LENGTH} seconds')
         if end - start > MAX_LENGTH + 0.5:
             raise ValueError('A short can be up to 3 minutes long')
-        style = spec.get('style') or 'none'
+        style = str(spec.get('style') or 'none')     # (anything but a name is no style, not a crash)
         if style != 'none' and style not in captions.STYLES:
             raise ValueError('Pick one of the caption styles')
-        accent = spec.get('accent') or 'ember'
+        accent = str(spec.get('accent') or 'ember')
         if accent not in captions.ACCENTS:
             raise ValueError('Pick one of the accent colors')
         return {'source': str(spec.get('source', '')), 'start': max(0.0, start), 'end': end,

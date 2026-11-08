@@ -105,6 +105,15 @@ class Filing(unittest.TestCase):
         self.assertEqual(info['format']['tags']['date'], date)
         self.assertIn('Morning worship', info['format']['tags']['comment'])
         self.assertEqual(sum(s['disposition']['attached_pic'] for s in info['streams']), 1)   # the thumbnail
+        # The hub's copy goes through MPEG-TS for its header: every frame is still there, and decodes cleanly
+        hub = folder / 'Sunday Service - Week 3 - hub recording.mp4'
+        frames = subprocess.run([settings.FFPROBE_BIN, '-v', 'error', '-select_streams', 'v:0', '-count_frames',
+                                 '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', str(hub)],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(frames, '50')   # 2 s at testsrc2's 25 fps
+        decoded = subprocess.run([settings.FFMPEG_BIN, '-v', 'error', '-i', str(hub), '-f', 'null', '-'],
+                                 capture_output=True, text=True)
+        self.assertEqual(decoded.stderr, '')
         about = (folder / 'Sunday Service - Week 3 - info.txt').read_text()
         self.assertIn('Main Hall (Building A)', about)
         self.assertIn('spoke recording.mp4', about)

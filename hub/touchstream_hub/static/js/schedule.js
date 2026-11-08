@@ -1,7 +1,7 @@
 // Scheduling: agenda, broadcast editor (one-off or recurring), connected YouTube channels
 import { html, useState, useEffect } from '../vendor/preact-htm.module.js';
 import { api, bytes, clock, dayLabel, hubEnv, reveal, revealLabel, until, usePoll, useNow, MARK } from './lib.js';
-import { Avatar, Icon, IconButton, Modal, Switch } from './ui.js';
+import { Avatar, Icon, IconButton, Modal, Preview, Switch } from './ui.js';
 import { Chips, DateField, Select, TimeField, isoDate, joinTime, lengthLabel, splitTime, weekStart } from './fields.js';
 import { ask, confirmAction, toast } from './dialogs.js';
 import { fmt } from './editor.js';
@@ -173,13 +173,16 @@ function initial({ event, planned, spokes, channels, defaultSpoke }) {
     auto_start: true, channel_ids: channels.map((c) => c.id), rule: null, until: null };
 }
 
+/** A day in a sentence: "today", "tomorrow", "yesterday", or "on Sunday, Nov 15". */
+const dayPhrase = (t) => { const d = dayLabel(t); return d.includes(' ') ? `on ${d}` : d.toLowerCase(); };
+
 export function BroadcastModal({ event, planned, spokes, channels, defaultSpoke, onClose }) {
   const series = (event && event.series) || (planned && planned.series);
   const [f, setF] = useState(() => initial({ event, planned, spokes, channels, defaultSpoke }));
   const [start] = useState(f);   // to tell what changed
   const [image, setImage] = useState(null);
   const [error, setError] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [step, setStep] = useState('');   // what saving is doing now ('': not saving)
   const set = (k, v) => setF((old) => ({ ...old, [k]: v }));
   const toggleChannel = (id) => set('channel_ids', f.channel_ids.includes(id)
     ? f.channel_ids.filter((c) => c !== id) : [...f.channel_ids, id]);
@@ -199,7 +202,11 @@ export function BroadcastModal({ event, planned, spokes, channels, defaultSpoke,
     const one = { ...common, title: fullTitle, spoke_id: f.spoke_id, start_at: startAt, end_at: length ? startAt + length * 60 : null };
     const rule = { ...common, title: f.title, add_date: f.add_date, repeat: f.rule, start_minutes: f.start,
       length_minutes: length, until_date: f.until, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
-    const thumb = (path) => image && api('PUT', `${path}/thumbnail`, null, { raw: image });
+    const thumb = async (path) => {
+      if (!image) return;
+      setStep(f.channel_ids.length ? 'Uploading the thumbnail to YouTube…' : 'Saving the thumbnail…');
+      await api('PUT', `${path}/thumbnail`, null, { raw: image });
+    };
     const ruleChanged = JSON.stringify(f.rule) !== JSON.stringify(start.rule) || f.until !== start.until;
     let scope = 'this';
     if (series && !repeating) {
@@ -217,7 +224,8 @@ export function BroadcastModal({ event, planned, spokes, channels, defaultSpoke,
           { label: 'All upcoming', value: 'all', kind: 'primary' }] });
       if (!scope) return;
     }
-    setSaving(true);
+    setStep(!f.channel_ids.length ? 'Saving…' : repeating && !series ? 'Setting up the series on YouTube…'
+      : event || series ? 'Updating it on YouTube…' : 'Creating the broadcast on YouTube…');
     try {
       let saved;
       if (!series && !repeating) {
@@ -239,9 +247,25 @@ export function BroadcastModal({ event, planned, spokes, channels, defaultSpoke,
         if (scope === 'stop') await api('DELETE', `/api/series/${series.id}?keep=${saved.id}`);
       }
       const failed = saved ? saved.targets.filter((t) => t.error) : [];
-      if (failed.length) { setError(`YouTube: ${failed[0].error}`); setSaving(false); return; }
+      if (failed.length) { setError(`YouTube: ${failed[0].error}`); setStep(''); return; }
+      const name = (spokes.find((s) => s.id === f.spoke_id) || {}).name || 'The spoke';
+      let copy = '';
+      if (saved && saved.on_spoke != null && saved.targets.length) {
+        // The spoke picks up its copy with its next check-in, every few seconds
+        if (!saved.spoke_online) copy = ` ${name} is offline: it gets its copy when it's back.`;
+        else {
+          setStep(`Sending it to ${name}…`);
+          for (let tries = 0; !saved.on_spoke && tries < 8; tries++) {
+            await new Promise((resolve) => setTimeout(resolve, 1250));
+            saved = await api('GET', `/api/events/${saved.id}`);
+          }
+          copy = saved.on_spoke ? ` ${name} has a copy, to stream straight to YouTube if the hub is down.` : '';
+        }
+      }
+      toast(`${event || series ? 'Saved' : 'Scheduled'}: ${repeating ? f.title : fullTitle}, ${dayPhrase(startAt)} at ${
+        clock(startAt)}.${copy}`, 'ok');
       onClose();
-    } catch (err) { setError(err.message); setSaving(false); }
+    } catch (err) { setError(err.message); setStep(''); }
   };
 
   return html`<${Modal} title=${event || planned ? 'Edit broadcast' : 'Schedule a broadcast'} onClose=${onClose} wide>
@@ -316,8 +340,9 @@ export function BroadcastModal({ event, planned, spokes, channels, defaultSpoke,
       </div>
       ${error && html`<p class="error">${error}</p>`}
       <div class="modal-foot">
-        <button type="button" class="btn ghost" onClick=${onClose}>Cancel</button>
-        <button class="btn primary" disabled=${saving}>${saving ? 'Saving…' : event || planned ? 'Save changes' : 'Schedule'}</button>
+        ${step && html`<span class="saving-step" role="status"><span class="spinner"></span>${step}</span>`}
+        <button type="button" class="btn ghost" onClick=${onClose} disabled=${!!step}>Cancel</button>
+        <button class="btn primary" disabled=${!!step}>${step ? 'Saving…' : event || planned ? 'Save changes' : 'Schedule'}</button>
       </div>
     </form>
   </${Modal}>`;
@@ -401,29 +426,46 @@ async function removeBroadcast(event, refresh) {
   if (ok) refresh();
 }
 
-function EventRow({ event, spoke, showSpoke, onEdit, refresh }) {
-  useNow(15000);
-  const act = (path, method = 'POST') => api(method, `/api/events/${event.id}${path}`).then(refresh).catch(toast);
-  const start = async () => (await confirmAction({ title: `Start "${event.title}" now?`, confirm: 'Start now' })) && act('/start');
-  const end = async () => (await confirmAction({ title: `End "${event.title}"?`, message: 'The stream stops on every channel.',
-    confirm: 'End broadcast', danger: true })) && act('/end');
-  const errors = event.targets.filter((t) => t.error);
-  const hasCopy = event.recordings.some((c) => c.path);
-  const state = event.state === 'live' ? html`<span class="chip live">● Live</span>`
+const startNow = async (event, refresh) => (await confirmAction({ title: `Start "${event.title}" now?`, confirm: 'Start now' }))
+  && api('POST', `/api/events/${event.id}/start`).then(refresh).catch(toast);
+const endNow = async (event, refresh) => (await confirmAction({ title: `End "${event.title}"?`,
+  message: 'The stream stops on every channel.', confirm: 'End broadcast', danger: true }))
+  && api('POST', `/api/events/${event.id}/end`).then(refresh).catch(toast);
+
+function StateChip({ event }) {
+  return event.state === 'live' ? html`<span class="chip live">● Live</span>`
     : event.state === 'ended' ? html`<span class="chip">${event.started_at || event.recordings.some((c) => c.source === 'hub')
       ? `Aired · ${duration(event)}` : event.recordings.length ? `Aired on the spoke · ${duration(event)}` : 'Missed'}</span>`
     : event.state === 'planned' ? html`<span class="chip" title="Its broadcast is created, on YouTube too, a week before">Planned</span>`
     : event.spoke_removed ? html`<span class="chip bad" title="Its spoke was removed: edit it to move it to another one">Needs a spoke</span>`
     : html`<span class="chip ember">${event.auto_start ? `Starts ${until(event.start_at)}` : 'Manual start'}</span>`;
+}
+
+/** Whether the spoke has its own copy of an upcoming broadcast, to go straight to YouTube if the hub is down. */
+function SpokeCopyChip({ event }) {
+  if (event.on_spoke == null || event.state !== 'scheduled' || !event.targets.length) return null;
+  return event.on_spoke
+    ? html`<span class="chip ok" title=${`If the hub is down, ${event.spoke_name} streams it straight to YouTube`}>
+        <${Icon} name="check" size=${12} /> Spoke has a copy</span>`
+    : html`<span class="chip" title=${event.spoke_online ? 'It gets its copy with its next check-in, in a few seconds'
+        : `${event.spoke_name} is offline: it gets its copy when it's back`}>Not on the spoke yet</span>`;
+}
+
+function EventRow({ event, spoke, showSpoke, onEdit, refresh }) {
+  useNow(15000);
+  const errors = event.targets.filter((t) => t.error);
+  const hasCopy = event.recordings.some((c) => c.path);
+  const page = event.state !== 'planned' && `#/broadcast/${event.id}`;
   return html`<div class=${`event ${event.state}`}>
     <div class="when"><b>${clock(event.started_at || event.start_at)}</b>${(event.ended_at || event.end_at)
       && html`<span class="muted small">to ${clock(event.ended_at || event.end_at)}</span>`}</div>
-    <div class="thumb" style=${event.thumbnail_url ? `background-image:url(${event.thumbnail_url})` : ''}>
-      ${!event.thumbnail_url && html`<img src=${MARK} alt="" />`}</div>
+    <a class="thumb" href=${page || undefined} style=${event.thumbnail_url ? `background-image:url(${event.thumbnail_url})` : ''}>
+      ${!event.thumbnail_url && html`<img src=${MARK} alt="" />`}</a>
     <div class="what">
-      <b>${event.title}</b>
+      ${page ? html`<a class="title-link" href=${page}><b>${event.title}</b></a>` : html`<b>${event.title}</b>`}
       <div class="meta">
-        ${state}
+        <${StateChip} event=${event} />
+        <${SpokeCopyChip} event=${event} />
         ${event.recordings_removed_at && !hasCopy && html`<span class="chip" title="Settings · Old recordings">Recordings removed</span>`}
         ${event.series && event.state !== 'ended' && html`<span class="chip" title=${event.detached ? 'Changed on its own' : ''}>
           <${Icon} name="repeat" size=${12} /> ${repeatLabel(event.series)}${event.detached ? ' · edited' : ''}</span>`}
@@ -438,8 +480,10 @@ function EventRow({ event, spoke, showSpoke, onEdit, refresh }) {
       ${errors.length > 0 && html`<p class="error small">${errors[0].channel}: ${errors[0].error}</p>`}
     </div>
     <div class="actions">
-      ${event.state === 'scheduled' && !event.spoke_removed && html`<button class="btn small" onClick=${start}><${Icon} name="play" size=${14} /> Start now</button>`}
-      ${event.state === 'live' && html`<button class="btn danger small" onClick=${end}><${Icon} name="stop" size=${14} /> End</button>`}
+      ${event.state === 'scheduled' && !event.spoke_removed && html`<button class="btn small" onClick=${() => startNow(event, refresh)}>
+        <${Icon} name="play" size=${14} /> Start now</button>`}
+      ${event.state === 'live' && html`<button class="btn danger small" onClick=${() => endNow(event, refresh)}>
+        <${Icon} name="stop" size=${14} /> End</button>`}
       ${event.state === 'ended' && hasCopy && html`<a class="btn small" href=${`#/edit/${event.id}`}>
         <${Icon} name="scissors" size=${14} /> ${event.edits.length ? 'Edited' : 'Edit'}</a>`}
       ${event.state === 'ended' && hasCopy && html`<a class="btn ghost small" href=${`#/transcript/${event.id}`}>${
@@ -515,5 +559,116 @@ export function SchedulePage() {
         <${OtherRecordings} items=${events.other_recordings.filter(mine)} spokes=${data.spokes} />`}
     ${editorFor(editing, { spokes: data.spokes, channels: data.channels, defaultSpoke: filter,
       onClose: () => { setEditing(null); refresh(); } })}
+  </div>`;
+}
+
+// ---- One broadcast: its picture, when and where it goes, and what to do with it ----
+const label = (list, value) => (list.find(([v]) => v === value) || [, value])[1];
+
+export function BroadcastPage({ id }) {
+  const [event, setEvent] = useState(null);
+  const [data, setData] = useState(null);
+  const [missing, setMissing] = useState('');
+  const [editing, setEditing] = useState(false);
+  useNow(15000);
+  const refresh = async () => {
+    try {
+      const [d, e] = await Promise.all([api('GET', '/api/dashboard'), api('GET', `/api/events/${id}`)]);
+      setData(d); setEvent(e);
+    } catch (err) { setMissing(err.message); }
+  };
+  usePoll(refresh, 3000, [id]);
+  if (missing && !event) return html`<div class="empty"><h2>${missing}</h2><a href="#/schedule">Back to the schedule</a></div>`;
+  if (!event || !data) return null;
+  const spoke = data.spokes.find((s) => s.id === event.spoke_id);
+  const hasCopy = event.recordings.some((c) => c.path);
+  const ended = event.state === 'ended';
+  // Once it's aired, its recording plays here: the spoke's copy, which has no network gaps, else the hub's
+  const recording = ended && (event.recordings.find((c) => c.path && c.source === 'spoke') || event.recordings.find((c) => c.path));
+  const start = event.started_at || event.start_at;
+  const end = event.ended_at || event.end_at;
+  const preview = (on) => api('POST', `/api/spokes/${spoke.id}/mode`, { mode: on ? 'preview' : 'off' }).then(refresh).catch(toast);
+  const details = [
+    ['When', `${dayLabel(start)} · ${clock(start)}${end ? ` to ${clock(end)}` : ''}${
+      event.state === 'scheduled' ? ` · ${until(event.start_at)}` : ended ? ` · ${duration(event)}` : ''}`],
+    ['Repeats', event.series ? repeatLabel(event.series) : 'No'],
+    ['Spoke', spoke ? html`<a href=${`#/spokes/${spoke.id}`}>${spoke.name}</a> · ${spoke.online ? 'online' : 'offline'}`
+      : `${event.spoke_name || '—'} · removed`],
+    !ended && ['Starts', event.auto_start ? 'By itself at the start time' : 'When you press Start now'],
+    event.on_spoke != null && event.targets.length > 0 && ['Spoke’s copy', event.on_spoke
+      ? 'Yes: if the hub is down, the spoke streams it straight to YouTube'
+      : event.spoke_online ? 'Not yet: it gets it in a few seconds' : 'Not yet: it gets it when the spoke is back online'],
+    ['Visibility', label(PRIVACY, event.privacy)],
+    ['Latency', label(LATENCY, event.latency)],
+    ['Made for kids', event.made_for_kids ? 'Yes' : 'No'],
+  ].filter(Boolean);
+  return html`<div>
+    <a class="crumb" href="#/schedule"><${Icon} name="back" size=${15} /> Schedule</a>
+    <div class="page-head">
+      <div class="min0"><h1>${event.title}</h1>
+        <div class="meta"><${StateChip} event=${event} /><${SpokeCopyChip} event=${event} />
+          ${event.series && html`<span class="chip"><${Icon} name="repeat" size=${12} /> ${repeatLabel(event.series)}</span>`}</div></div>
+      <div class="head-actions">
+        ${event.state === 'scheduled' && !event.spoke_removed && html`<button class="btn primary" onClick=${() => startNow(event, refresh)}>
+          <${Icon} name="play" size=${16} /> Start now</button>`}
+        ${event.state === 'live' && html`<button class="btn danger" onClick=${() => endNow(event, refresh)}>
+          <${Icon} name="stop" size=${16} /> End broadcast</button>`}
+        ${ended && hasCopy && html`<a class="btn primary" href=${`#/edit/${event.id}`}><${Icon} name="scissors" size=${16} />
+          ${event.edits.length ? 'Edited video' : 'Edit the video'}</a>`}
+        ${event.state === 'scheduled' && !event.adhoc && html`<button class="btn" onClick=${() => setEditing(true)}>
+          <${Icon} name="edit" size=${16} /> Edit</button>`}
+        <${IconButton} icon="trash" label="Delete" onClick=${() => removeBroadcast(event, () => { location.hash = '#/schedule'; }).catch(toast)} />
+      </div>
+    </div>
+    <div class="spoke-layout">
+      <div class="panel flush">
+        ${recording ? html`<div class="preview large"><video controls preload="metadata" poster=${event.thumbnail_url || undefined}
+            src=${`/api/recordings/file/${recording.path}`}></video></div>`
+          : spoke ? html`<${Preview} spoke=${spoke} large />`
+          : html`<div class="preview large"><div class="placeholder"><img src=${MARK} alt="" /><span class="small">Its spoke was removed</span></div></div>`}
+        <div class="controls">
+          ${spoke && event.state === 'scheduled' && spoke.mode !== 'live' && html`<button class="btn small" disabled=${!spoke.online}
+            onClick=${() => preview(spoke.mode !== 'preview')}>${spoke.mode === 'preview' ? 'Stop the preview' : 'Preview the picture'}</button>`}
+          ${spoke && event.state === 'scheduled' && spoke.mode === 'live' && html`<span class="muted small">${spoke.name} is live with something else</span>`}
+          ${ended && html`<span class="muted small">Aired ${dayPhrase(start)} at ${clock(start)}</span>`}
+          ${recording && html`<span class="muted small" style="margin-left:auto">${COPY_LABEL[recording.source] || 'Recording'}</span>`}
+          ${spoke && !recording && html`<span class="muted small" style="margin-left:auto">${spoke.name} · 1080p${spoke.framerate} · ${spoke.bitrate_kbps / 1000} Mbps</span>`}
+        </div>
+      </div>
+      <div class="side">
+        <div class="panel">
+          <h3>Details</h3>
+          ${event.thumbnail_url && html`<div class="detail-thumb" style=${`background-image:url(${event.thumbnail_url})`}></div>`}
+          <div class="kv small">${details.map(([k, v]) => html`<span class="muted">${k}</span><span>${v}</span>`)}</div>
+        </div>
+        <div class="panel">
+          <h3>YouTube</h3>
+          ${event.targets.map((t) => html`<div class="target">
+            <div class="target-head"><${Avatar} channel=${t} size=${22} /><b>${t.channel}</b></div>
+            ${t.error ? html`<p class="error small">${t.error}</p>` : html`<div class="links small">
+              ${t.watch_url && html`<a href=${t.watch_url} target="_blank" rel="noopener">Watch <${Icon} name="external" size=${12} /></a>`}
+              ${t.studio_url && html`<a href=${t.studio_url} target="_blank" rel="noopener">YouTube Studio <${Icon} name="external" size=${12} /></a>`}
+            </div>`}
+          </div>`)}
+          ${!event.targets.length && html`<p class="muted small">${event.adhoc ? 'Went live from the dashboard, to its stream keys.'
+            : 'Record only: the hub records it, plus the spoke’s own copy.'}</p>`}
+        </div>
+      </div>
+    </div>
+    ${event.description && html`<div class="panel"><h3>Description</h3><p class="description">${event.description}</p></div>`}
+    ${(ended || event.state === 'live') && html`<div class="panel">
+      <h3>Recordings</h3>
+      ${hasCopy ? html`<div class="tool-row">
+          <${DownloadMenu} copies=${event.recordings} edits=${event.edits} />
+          ${ended && html`<a class="btn small ghost" href=${`#/transcript/${event.id}`}>${!event.transcript ? 'Transcript'
+            : event.transcript.status === 'done' ? 'Transcript ✓' : event.transcript.status === 'failed' ? 'Transcript !'
+            : `Transcribing ${Math.round(event.transcript.progress * 100)}%`}</a>`}
+          ${ended && html`<a class="btn small ghost" href=${`#/edit/${event.id}/shorts`}>${event.shorts ? `Shorts · ${event.shorts}` : 'Shorts'}</a>`}
+          ${hubEnv.local && event.folder && html`<${IconButton} icon="folder" label=${revealLabel()} onClick=${() => reveal({ event_id: event.id })} />`}
+        </div>`
+        : html`<p class="muted small">${event.state === 'live' ? 'Recording now: the recordings appear here when it ends.'
+          : 'No recordings were kept.'}</p>`}
+    </div>`}
+    ${editing && editorFor(event, { spokes: data.spokes, channels: data.channels, onClose: () => { setEditing(false); refresh(); } })}
   </div>`;
 }

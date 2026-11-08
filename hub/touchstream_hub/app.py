@@ -629,7 +629,14 @@ def event_view(event, copies=None):
                         'studio_url': f'https://studio.youtube.com/video/{bid}/livestreaming' if bid else None})
     series = hub.series.get(event['series_id']) if event['series_id'] else None
     spoke = hub.db.spoke(event['spoke_id'])
+    # Whether the spoke has it in the schedule it keeps, to go straight to YouTube if the hub is down
+    # (None: its spoke doesn't say, or it isn't in the week the spoke keeps)
+    kept = (spoke.get('status') or {}).get('schedule_kept') if spoke else None
+    on_spoke = event['id'] in kept if isinstance(kept, list) and event['state'] in ('scheduled', 'live') \
+        and event['start_at'] < time.time() + SCHEDULE_DAYS * 86400 else None
     return {**event, 'made_for_kids': bool(event['made_for_kids']), 'auto_start': bool(event['auto_start']),
+            'on_spoke': on_spoke,
+            'spoke_online': bool(spoke and spoke['last_seen'] and time.time() - spoke['last_seen'] < ONLINE_FOR),
             'spoke_name': spoke['name'] if spoke else None, 'spoke_removed': bool(not spoke or spoke['removed_at']),
             'adhoc': bool(event['adhoc']), 'detached': bool(event['detached']),
             'series': hub.series.view(series) if series else None, 'targets': targets, 'recordings': copies or [],
@@ -694,6 +701,15 @@ def list_events(spoke_id: str = '', days: int = 90):
     return {'events': [event_view(e, copies.get(e['id'])) for e in rows],
             'planned': hub.series.planned(spoke_id),
             'other_recordings': sorted(other, key=lambda c: c['start'], reverse=True)}
+
+
+@app.get('/api/events/{event_id}', dependencies=[Depends(admin)])
+def get_event(event_id: int):
+    """One broadcast, with its recordings."""
+    event = hub.broadcasts.event(event_id)
+    if not event:
+        raise HTTPException(404, 'That broadcast is gone')
+    return event_view(event, _event_copies(event))
 
 
 @app.post('/api/events', dependencies=[Depends(admin)])

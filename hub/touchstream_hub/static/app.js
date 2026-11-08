@@ -6,7 +6,7 @@ import { Dialogs } from './js/dialogs.js';
 import { Assistant, AssistantSetup } from './js/assistant.js';
 import { HomePage } from './js/home.js';
 import { AddSpokeModal, AllSpokesModal, HubAddressButton, SpokeCard, SpokePage } from './js/spokes.js';
-import { SchedulePage } from './js/schedule.js';
+import { BroadcastPage, SchedulePage } from './js/schedule.js';
 import { AccessPrompt, SettingsPage } from './js/pages.js';
 import { EditorPage } from './js/editor.js';
 import { TranscriptPage } from './js/transcript.js';
@@ -75,10 +75,11 @@ function Shell({ onSignOut, ai }) {
   const hash = useHash();
   const [, section, id, sub] = hash.split('/');
   const page = section || 'home';
-  const active = ['edit', 'transcript', 'shorts'].includes(page) ? 'schedule' : page;
+  const active = ['edit', 'transcript', 'shorts', 'broadcast'].includes(page) ? 'schedule' : page;
   const link = (name, href, label) => html`<a href=${href} class=${active === name ? 'active' : ''}>${label}</a>`;
   const content = page === 'spokes' && id ? html`<${SpokePage} id=${id} />`
     : page === 'schedule' ? html`<${SchedulePage} />`
+    : page === 'broadcast' && id ? html`<${BroadcastPage} id=${id} />`
     : page === 'edit' && id ? html`<${EditorPage} eventId=${id} tab=${sub} />`
     : page === 'transcript' && id ? html`<${TranscriptPage} eventId=${id} />`
     : page === 'shorts' && id ? html`<${EditorPage} eventId=${id} tab="shorts" />`

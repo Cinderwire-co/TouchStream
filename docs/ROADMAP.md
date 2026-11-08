@@ -7,6 +7,7 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 
 ## Done recently
 
+- Every broadcast has its own page (click it on the schedule): its picture, or once it's aired its recording; when and where it goes; Start now or End, and Edit; its YouTube links; and its recordings, transcript and shorts. Scheduling says what it's doing as it saves (creating the broadcast on YouTube, the thumbnail, sending it to the spoke) and confirms when it's done. Spokes say which broadcasts they've kept, so the schedule shows when a spoke has its copy to stream straight to YouTube if the hub is down.
 - The PicoKVM, on the desk: it starts from the installer's card and pairs itself; HDMI capture at 1080p60 through the hardware encoder; HDMI sound at the right pitch (the HDMI chip's reference clock, 26 to 27 MHz, in the image's device tree); TouchStream's splash from the first moment, with the kernel's console and logo kept off the screen; and the spoke's screen at a quarter of the CPU it took. On a Mac, the installer opens the card itself with an admin's password (macOS's `authopen`), as macOS refuses a removable card to a program run as admin.
 - Spoke Recordings menu: rolling delete when the card fills, and a QR code that downloads a recording to a phone. The spoke makes a regular MP4 first, because phones can't play a streamed one.
 - Hub shows its real LAN address (not "localhost"). If the hub computer's IP changes, it tells its spokes the new address.
@@ -114,6 +115,9 @@ Working in the emulator (`spoke/tools/dev emulate`: an ARMv7 container held to t
 replaying a clip as its HDMI input): the hub link and adoption, the SRT stream, recording and upload, the screen with
 Go live, End and Record, and recordings to phones by QR code. Still to come:
 
+- **Software updates over the network**: today a new spoke version reaches a box only on a new installer card (or
+  SSH on a developer's image). The hub should offer it and the box fetch it, write it to its other system slot
+  (A/B: the slot it isn't running), and start from that, falling back to the old slot if it doesn't come up.
 - **On the box** (what's inside, and the checks in order: [spoke/docs/picokvm.md](../spoke/docs/picokvm.md)):
   HDMI capture and the RV1106's hardware H.264 encoder, at the hub's frame rate (it's sold as 1080p60), through a
   small capture helper of our own, as Luckfox's `kvm_video` tops out at 2 Mbps; the EDID that asks the source for

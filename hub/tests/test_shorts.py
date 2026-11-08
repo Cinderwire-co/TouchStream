@@ -174,7 +174,8 @@ class Rendering(unittest.TestCase):
         queued = self.shorts.create(event, 'x', {'source': self.ref, 'start': 0, 'end': 10})
         with self.assertRaises(ValueError):
             self.shorts.delete(queued)                                   # not while it's being made
-        for spec in ({'start': 0, 'end': 2}, {'start': 0, 'end': 200}, {'start': 0, 'end': 10, 'style': 'comic'}):
+        for spec in ({'start': 0, 'end': 2}, {'start': 0, 'end': 200}, {'start': 0, 'end': 10, 'style': 'comic'},
+                     {'start': 0, 'end': 10, 'style': ['bold', 'Bold']}, {'start': 0, 'end': 10, 'accent': {'ember': 1}}):
             with self.assertRaises(ValueError):
                 self.shorts.create(event, 'x', {'source': self.ref, **spec})
 

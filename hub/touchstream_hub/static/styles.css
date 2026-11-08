@@ -310,6 +310,21 @@ textarea:focus { border-color: var(--ember); box-shadow: 0 0 0 3px var(--ember-s
 .event .what b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .event .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 7px; }
 .event .meta a.chip { text-decoration: none; }
+.event .title-link { display: block; min-width: 0; color: inherit; text-decoration: none; }
+.event .title-link:hover b { text-decoration: underline; }
+/* The schedule dialog saying what it's doing as it saves */
+.saving-step { display: flex; align-items: center; gap: 10px; margin-right: auto; color: var(--smoke); font-size: 14px; }
+/* One broadcast's page */
+.detail-thumb { aspect-ratio: 16 / 9; border-radius: 10px; background: #000 center / cover no-repeat; margin-bottom: 14px;
+  border: 1px solid var(--line-soft); }
+.target { padding: 10px 0; border-top: 1px solid var(--line-soft); }
+.target:first-of-type { border-top: 0; padding-top: 2px; }
+.target-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.target .links { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 6px 0 0 32px; }
+.target .links a { display: inline-flex; align-items: center; gap: 4px; color: var(--smoke); text-decoration: none; }
+.target .links a:hover { color: var(--ash); }
+.description { white-space: pre-wrap; margin: 0; }
+.tool-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .event .actions { display: flex; align-items: center; gap: 4px; }
 
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }

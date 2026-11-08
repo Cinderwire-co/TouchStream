@@ -52,6 +52,7 @@ type Spoke struct {
 	problemAt  time.Time
 	manual     time.Time // when Record was pressed on the device, while recording that way
 	recordedAt time.Time // when the current recording started
+	kept       []int     // the broadcasts in the schedule kept on the card, for the hub to show (nil: none yet)
 	cpu        cpuSampler
 }
 
@@ -101,6 +102,14 @@ func (s *Spoke) Apply(d *hub.Desired) {
 		d = &hub.Desired{Mode: "off"}
 	} else if err := direct.Save(s.Data, d.Plan); err != nil {
 		log.Printf("Keeping the schedule: %v", err)
+	} else {
+		kept := make([]int, len(d.Plan.Schedule))
+		for i, e := range d.Plan.Schedule {
+			kept[i] = e.ID
+		}
+		s.mu.Lock()
+		s.kept = kept
+		s.mu.Unlock()
 	}
 	if s.Direct.Active() {
 		log.Print("The hub is back; it takes over from the direct stream")
@@ -340,10 +349,11 @@ func (s *Spoke) Status() map[string]any {
 	sig := s.Source.Signal()
 	up, upErr := s.Uplink.State()
 	s.mu.Lock()
-	mode := s.mode
+	mode, kept := s.mode, s.kept
 	s.mu.Unlock()
 	status := map[string]any{
-		"version": Version, "model": "picokvm", "framerates": Rates, "signal": sig.Present,
+		"schedule_kept": kept,
+		"version":       Version, "model": "picokvm", "framerates": Rates, "signal": sig.Present,
 		"signal_label": nil, "signal_fps": nil, "stream_fps": nil, "framerate": nonEmpty(s.Store.Get().Framerate, "30"),
 		"source": nil, "test_pattern": false, "test_pattern_at": 0,
 		"temp": cpuTemp(), "cpu": s.cpu.percent(), "mode": nonEmpty(mode, "off"), "network": "Ethernet",
