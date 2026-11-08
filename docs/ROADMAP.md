@@ -212,6 +212,5 @@ open, and Add spoke writing the card right there. Phones and other computers sti
 
 - Parts list with links: the PicoKVM (with its screen), a microSD card, a power supply, and a travel router for Wi-Fi.
 - No default passwords anywhere.
-- Make the GHCR image public.
 - Revisit the license (MIT for now; the goal is to keep the Cinderwire branding and stop rebranded forks).
 - Real-world tests: a real HDMI source and audio (including 50, 60 and 29.97 fps sources), a real YouTube channel, and the QR download on Android and iPhone.
