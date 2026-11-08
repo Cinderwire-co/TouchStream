@@ -514,7 +514,7 @@ def send_command(spoke_id: str, command: str = Body(embed=True)):
     spoke = hub.db.spoke(spoke_id)
     if not spoke:
         raise HTTPException(404)
-    if command not in ('reboot', 'update', 'speedtest'):
+    if command not in ('reboot', 'speedtest'):
         raise HTTPException(400, 'Unknown command')
     hub.db.run('UPDATE spokes SET commands = ? WHERE id = ?',
                json.dumps(spoke['commands'] + [command]), spoke_id)

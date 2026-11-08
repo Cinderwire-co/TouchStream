@@ -180,7 +180,9 @@ function SpokeSettingsModal({ spoke, onClose }) {
     try { await api('PATCH', `/api/spokes/${spoke.id}`, { ...form, bitrate_kbps: Number(form.bitrate_kbps) }); onClose(); }
     catch (err) { setError(err.message); }
   };
-  const command = async (c) => { await api('POST', `/api/spokes/${spoke.id}/command`, { command: c }); setSent(c === 'update' ? 'Update sent' : 'Restart sent'); };
+  const command = async (c) => { await api('POST', `/api/spokes/${spoke.id}/command`, { command: c }); setSent('Restart sent'); };
+  const update = async () => { await api('POST', `/api/spokes/${spoke.id}/update`); setSent(`Update to ${spoke.update.hub_version} asked for: it starts once the spoke is idle`); };
+  const behind = spoke.update && ['available', 'failed'].includes(spoke.update.state);
   const forget = async () => {
     if (!(await confirmAction({ title: `Remove ${spoke.name}?`, confirm: 'Remove spoke', danger: true,
       message: 'The hub forgets this device. Its broadcasts, recordings, edits and shorts all stay here. Upcoming broadcasts stay on the schedule until you move them to another spoke.' }))) return;
@@ -212,12 +214,12 @@ function SpokeSettingsModal({ spoke, onClose }) {
       <div class="modal-foot split">
         <span class="foot-group">
           <button type="button" class="btn ghost small" onClick=${() => command('reboot')}>Restart</button>
-          <button type="button" class="btn ghost small" title="Get the latest TouchStream software and restart" onClick=${() => command('update')}>Update software</button>
+          ${behind && html`<button type="button" class="btn ghost small" title="Bring it up to the hub's version" onClick=${update}>Update to ${spoke.update.hub_version}</button>`}
           <button type="button" class="btn danger small" onClick=${forget}>Remove</button>
         </span>
         <button class="btn primary">Save</button>
       </div>
-      ${sent && html`<p class="muted small">${sent}; the spoke picks it up within a few seconds.</p>`}
+      ${sent && html`<p class="muted small">${sent}${sent === 'Restart sent' ? '; the spoke picks it up within a few seconds' : ''}.</p>`}
     </form>
   </${Modal}>`;
 }
