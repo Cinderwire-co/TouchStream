@@ -99,7 +99,7 @@ class Updates:
 
     def info(self):
         state = self.state()
-        latest = state.get('latest')
+        latest = state.get('latest') if ENABLED else None   # (switched off: whatever was found before doesn't count)
         waiting = self.busy() if self.busy and latest and newer(latest, self.version) else ''
         return {'version': self.version, 'install': self.kind, 'can_update_self': self.can_update_self(),
                 'enabled': ENABLED, 'auto': self.auto(), 'latest': latest,
