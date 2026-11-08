@@ -138,3 +138,11 @@ func TestRendersAtOnce(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestViewerCountsFitTheScreen(t *testing.T) {
+	for n, want := range map[int]string{0: "0", 950: "950", 1234: "1.2K", 2000: "2K", 34567: "34K"} {
+		if got := count(n); got != want {
+			t.Errorf("count(%d) = %q, want %q", n, got, want)
+		}
+	}
+}

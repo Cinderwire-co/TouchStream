@@ -1,6 +1,6 @@
 // Shorts (hub only), the editor's Shorts tab: suggested moments, making a vertical short of one, and the shorts made
 import { html, useState } from '../vendor/preact-htm.module.js';
-import { api, ago, hubEnv, reveal, revealLabel } from './lib.js';
+import { api, ago, hubEnv, reveal, revealLabel, viewsLabel } from './lib.js';
 import { Avatar, Icon, IconButton, Modal, Switch } from './ui.js';
 import { Select } from './fields.js';
 import { confirmAction, toast } from './dialogs.js';
@@ -83,7 +83,7 @@ function ShortCard({ short, event, channels, onChange, onPick, refresh }) {
       <div class="muted small">${status}${short.status === 'done' && short.error ? html` <span class="error">${short.error}</span>` : ''}</div>
       ${working && html`<div class="progress"><i style=${`width:${Math.round(short.progress * 100)}%`}></i></div>`}
       ${short.published.length > 0 && html`<div class="published">${short.published.map((p) => html`<a href=${p.url}
-        target="_blank" rel="noopener">${p.channel} ↗</a>`)}</div>`}
+        target="_blank" rel="noopener">${p.channel}${p.stats ? ` · ${viewsLabel(p.stats.views)}` : ''} ↗</a>`)}</div>`}
       ${short.status === 'done' && html`<div class="version-actions">
         ${channels.length > 0 && html`<button class="btn small" onClick=${() => setPublishing(true)}>Publish</button>`}
         <a class="btn ghost small" href=${`/api/recordings/file/${short.output}`} download>Download</a>

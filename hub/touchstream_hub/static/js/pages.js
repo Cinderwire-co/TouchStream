@@ -156,6 +156,31 @@ function TranscriptionSettings({ options, saved }) {
   </div>`;
 }
 
+const COUNTS = [1, 2, 3, 4, 5, 6].map((n) => [n, `${n} Short${n > 1 ? 's' : ''}`]);
+
+/** Shorts made by themselves after each broadcast (from its transcript, by the assistant), as drafts to look over. */
+function AutoShorts({ options, saved }) {
+  const [o, setO] = useState(options);
+  const update = async (patch) => {
+    setO({ ...o, ...patch });
+    await api('PATCH', '/api/settings', { ...(patch.on !== undefined && { shorts_auto: patch.on }), ...(patch.count && { shorts_auto_count: patch.count }) });
+    saved();
+  };
+  return html`<div class="panel form">
+    <h2>Shorts</h2>
+    <p class="muted">Once a broadcast is transcribed, the assistant picks its best moments and the hub makes Shorts of them:
+      vertical, following the speaker, with captions and the pauses taken out. They wait for you on the broadcast’s
+      page: nothing is published until you choose to.</p>
+    ${!o.available ? html`<p class="muted small">Shorts need the transcription add-on, which this hub doesn’t have.</p>`
+    : html`<div class="check-row"><div><b>Make Shorts after each broadcast</b>
+        <div class="muted small">${o.assistant ? 'A few minutes after its transcript is ready.'
+          : html`It needs the assistant: add an OpenRouter key in <a href="#/settings/ai">Assistant and API</a>.`}</div></div>
+        <${Switch} checked=${o.on} onChange=${(v) => update({ on: v })} label="Make Shorts after each broadcast" /></div>
+      <div class="field" style="max-width:260px"><span>How many</span>
+        <${Select} label="How many Shorts" value=${o.count} options=${COUNTS} onChange=${(v) => update({ count: v })} /></div>`}
+  </div>`;
+}
+
 function RecordingsFolder({ s, saved }) {
   const [folder, setFolder] = useState(s.recordings_folder);
   const [current, setCurrent] = useState(s.recordings_folder);
@@ -400,7 +425,7 @@ function AboutHub({ s }) {
 const SECTIONS = [
   ['general', 'General', 'Updates, password and this hub'],
   ['youtube', 'YouTube', 'Channels and Google sign-in'],
-  ['recordings', 'Recordings', 'Where they go, how long they stay, transcripts'],
+  ['recordings', 'Recordings', 'Where they go, how long they stay, transcripts and Shorts'],
   ['brands', 'Brands', 'Intros, outros and watermarks'],
   ['ai', 'Assistant and API', 'The assistant, AI agents and scripts'],
   ['network', 'Network', 'How spokes and encoders reach the hub'],
@@ -416,7 +441,7 @@ export function SettingsPage({ section }) {
     general: html`<${UpdatesSettings} /><${Password} s=${s} /><${AboutHub} s=${s} />`,
     youtube: html`<${YouTubeSettings} />`,
     recordings: html`<${RecordingsFolder} s=${s} saved=${saved} /><${OldRecordings} saved=${saved} />
-      <${TranscriptionSettings} options=${s.transcription} saved=${saved} />`,
+      <${TranscriptionSettings} options=${s.transcription} saved=${saved} /><${AutoShorts} options=${s.shorts_auto} saved=${saved} />`,
     brands: html`<${BrandsSettings} />`,
     ai: html`<${AssistantSettings} changed=${() => dispatchEvent(new Event('ts-auth'))} /><${ApiAccess} />`,
     network: html`<${Network} s=${s} />`,

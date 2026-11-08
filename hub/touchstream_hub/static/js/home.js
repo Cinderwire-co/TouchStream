@@ -1,6 +1,6 @@
 // Home: the whole system at a glance (spokes' health, what's next, the hub's internet and storage)
 import { html, useState } from '../vendor/preact-htm.module.js';
-import { ago, api, bytes, clock, dayLabel, until, usePoll, useNow, MARK } from './lib.js';
+import { ago, api, bytes, clock, compact, dayLabel, until, usePoll, useNow, viewsLabel, MARK } from './lib.js';
 import { Icon } from './ui.js';
 import { toast } from './dialogs.js';
 import { repeatLabel, withPlanned } from './schedule.js';
@@ -131,9 +131,11 @@ export function HomePage() {
             : `${dayLabel(e.start_at)} ${clock(e.start_at)}`} · ${names[e.spoke_id] || e.spoke_name || ''}</div></div>
           ${e.series && html`<span class="muted" title=${repeatLabel(e.series)}><${Icon} name="repeat" size=${14} /></span>`}
         </a>`)}</div>` : html`<p class="muted small">Nothing scheduled.</p>`}</div>
-      <div><div class="section-head"><h2>Recently aired</h2></div>
+      <div><div class="section-head"><h2>Recently aired</h2>${info.views && info.views.views > 0 && html`<span class="muted small"
+          title="Views on YouTube of everything published in the last 30 days: broadcasts, edits and Shorts"><${Icon} name="eye" size=${14} />
+          ${' '}${compact(info.views.views)} views in 30 days</span>`}</div>
         ${info.recent.length ? html`<div class="mini-list">${info.recent.map((e) => html`<div class="mini">
-          <a class="min0 grow title-link" href=${`#/broadcast/${e.id}`}><b class="ellipsis">${e.title}</b><div class="muted small">${dayLabel(e.start_at)} · ${names[e.spoke_id] || e.spoke_name || ''}</div></a>
+          <a class="min0 grow title-link" href=${`#/broadcast/${e.id}`}><b class="ellipsis">${e.title}</b><div class="muted small">${dayLabel(e.start_at)} · ${names[e.spoke_id] || e.spoke_name || ''}${e.stats ? ` · ${viewsLabel(e.stats.views)}` : ''}</div></a>
           ${e.recordings.some((c) => c.path) && html`<a class="btn ghost small" href=${`#/edit/${e.id}`}><${Icon} name="scissors" size=${13} /> ${e.edits.length ? 'Edited' : 'Edit'}</a>`}
         </div>`)}</div>` : html`<p class="muted small">Nothing has aired yet.</p>`}</div>
     </div>
