@@ -416,6 +416,9 @@ function AboutHub({ s }) {
       <span class="muted">Installed with</span><span>${INSTALL[s.install] || s.install}</span>
       <span class="muted">Its data</span><span class="mono">${s.data_dir}</span>
     </div>
+    ${['macos', 'windows'].includes(s.install) && html`<p class="muted small">To remove the hub from this computer, open the
+      TouchStream installer and choose <b>Remove the hub from this computer</b>. It can keep your settings and recordings, or
+      move them to the ${s.install === 'windows' ? 'Recycle Bin' : 'Trash'} too.</p>`}
     <a class="made-by" href="https://cinderwire.co/touchstream" target="_blank" rel="noopener">
       <img src=${CINDERWIRE} alt="" /> TouchStream is made by Cinderwire</a>
   </div>`;
