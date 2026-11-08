@@ -10,7 +10,8 @@
 # "TouchStream Hub" to the desktop's app menu. Run it again to update: settings and
 # recordings stay. Prefer Docker for servers you manage with Coolify (see the README).
 #
-#   ... | bash -s -- --uninstall    remove the hub (keeps your settings and recordings)
+#   ... | bash -s -- --uninstall                remove the hub (keeps your settings and recordings)
+#   ... | bash -s -- --uninstall --everything   and its settings, YouTube sign-ins and recordings (deleted)
 #
 #   TOUCHSTREAM_SOURCE   install the hub from a folder or URL instead of GitHub
 #   TOUCHSTREAM_PORT     dashboard port (default: 8080, or the next free one)
@@ -44,6 +45,14 @@ if [ "${1:-}" = "--uninstall" ]; then
     [ "$SYSTEMD" = 1 ] && systemctl --user disable --now touchstream-hub 2>/dev/null || true
     rm -f "$UNIT" "$DESKTOP"
     [ -n "$UV" ] && "$UV" tool uninstall touchstream-hub >/dev/null 2>&1 || true
+    if [ "${2:-}" = "--everything" ]; then
+        # (a recordings folder chosen in the dashboard stays: it may hold other things)
+        for f in "$DATA" "$HOME/Videos/TouchStream"; do
+            [ -e "$f" ] && { command -v gio >/dev/null && gio trash "$f" 2>/dev/null || rm -rf "$f"; }
+        done
+        say "TouchStream Hub removed, with its settings and recordings."
+        exit 0
+    fi
     say "TouchStream Hub removed. Your settings are still in $DATA and your recordings where you chose."
     exit 0
 fi

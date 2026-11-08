@@ -7,6 +7,8 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 
 ## Done recently
 
+- Spokes that come ready to go: the installer asks where a spoke came from. One sold ready to go (TouchStream on it, its 32 GB card in) is found on the network, paired and named in the installer, with a code on the spoke's screen when the hub can't see the network; a PicoKVM of your own gets a card, as before. **Add spoke** in the dashboard asks for a name once a spoke is adopted or pairs with a code. Plain cards (no hub, no name) for spokes that go to someone else.
+- Removing the hub: the installer's **Remove the hub from this computer**, keeping its settings and recordings or moving them to the Trash (Recycle Bin) too; the scripts' `--uninstall --everything`.
 - Views: each broadcast shows its views on YouTube (its live video, its edited video and its Shorts together), likes and comments, how many are watching while it's live and the peak after; Home adds up the last 30 days; the spoke's screen says how many are watching. Read from YouTube with the permission the hub already has (videos.list, one quota unit for up to 50 videos), every minute while live and less often as videos get older.
 - Shorts made by themselves: once a broadcast is transcribed, the assistant picks its best moments and the hub makes three Shorts of them, as drafts to look over (Settings > Recordings > Shorts).
 - Updates: the hub looks for new releases on GitHub and updates itself when nothing's live or due (or, with automatic updates off, says so on every page and waits for Update now); then it gives each spoke the matching version when it's idle. Spokes check each update was signed with TouchStream's release key, keep the version before, and go back to it if the new one can't reach the hub. A hub in Docker says when there's a new image instead. `tools/release` builds a release (the spoke's update, the card image, the Mac and Windows installers) and drafts it on GitHub.
@@ -100,6 +102,14 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 - Each transcript gets a short summary and chapter list, written by the assistant's model when one is set up.
 - Transcripts are split into passages and embedded. A local embedding model works offline; sqlite-vec keeps it all in the hub's one database.
 - One search box across all broadcasts. Results jump to the moment in the recording, and the editor opens there.
+
+## Automatic edits (next, the user asked for it)
+
+The site's main features list "edited livestreams uploaded for you". Today an edit is made and published by hand. To
+come: after each broadcast, the hub makes its edit by itself, as it makes its Shorts: the dead air before and after
+the service trimmed (from the transcript: the first and last speech), the channel's brand (intro, outro, watermark)
+added, rendered, then waiting for approval or published by itself (a setting per series), with the live video made
+private or unlisted if wanted.
 
 ## The editor: still to come
 

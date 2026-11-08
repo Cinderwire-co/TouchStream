@@ -106,6 +106,12 @@ pre.log { max-height: 180px; overflow: auto; background: var(--ink); border: 1px
   background: var(--char2); cursor: pointer; text-align: left; width: 100%; font-weight: 500; }
 .card.chosen { border-color: var(--ember); background: var(--ember-soft); }
 .card .sd { width: 28px; height: 34px; flex: none; }
+.card.choice { padding: 18px; gap: 16px; }
+.card.choice b { font-size: 16px; display: block; margin-bottom: 4px; }
+.card.choice .go { color: var(--ember); font-size: 20px; flex: none; }
+.card.choice:hover { border-color: var(--ember); }
+.card.found { cursor: default; flex-wrap: wrap; }
+.card.found input { width: 190px; flex: none; }
 .names { display: grid; gap: 8px; margin: 14px 0; }
 .names .row input { flex: 1; }
 .summary { display: grid; gap: 6px; margin: 14px 0; }

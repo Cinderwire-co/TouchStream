@@ -62,7 +62,14 @@ you). There's a **TouchStream Hub** shortcut in Applications, the Start menu or 
 Change the recordings folder in Settings. On the hub's own computer there's a folder picker and a **Show in Finder**
 (or File Explorer) button.
 
-**To remove the hub** (your settings and recordings stay):
+**To remove the hub**, open the TouchStream installer and choose **Remove the hub from this computer**. It stops the
+hub and takes it out of Applications (or the Start menu). Your settings and recordings stay for a hub installed again,
+unless you tick **Remove its settings and recordings too**: then the hub's settings, its YouTube connections and the
+recordings in Movies › TouchStream (Videos › TouchStream on Windows) go to the Trash (the Recycle Bin). A recordings
+folder you chose yourself is left as it is. Spokes wait for a hub until one is installed again.
+
+Or from a terminal (add `--everything`, or set `TOUCHSTREAM_UNINSTALL` to `everything`, to remove the settings and
+recordings too):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Cinderwire-co/TouchStream/main/hub/install/macos.sh | bash -s -- --uninstall
@@ -72,6 +79,9 @@ curl -fsSL https://raw.githubusercontent.com/Cinderwire-co/TouchStream/main/hub/
 ```powershell
 $env:TOUCHSTREAM_UNINSTALL = 1; irm https://raw.githubusercontent.com/Cinderwire-co/TouchStream/main/hub/install/windows.ps1 | iex
 ```
+
+Removing the hub doesn't give its YouTube access back to Google: disconnect each channel in Settings first, or remove
+TouchStream at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
 
 ## On a server
 

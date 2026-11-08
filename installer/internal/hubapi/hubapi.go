@@ -94,3 +94,54 @@ func (c *Client) MakeSpoke(ctx context.Context, name string) (Spoke, error) {
 func (c *Client) ForgetSpoke(ctx context.Context, id string) error {
 	return c.call(ctx, "DELETE", "/api/spokes/"+id, nil, nil)
 }
+
+// Nearby is what the hub sees: spokes on its network waiting to be adopted (a spoke that came ready
+// to go, say), and the spokes it has. Without Listening it can't see the network (Docker, or another
+// network): spokes pair with a code instead.
+type Nearby struct {
+	Listening bool `json:"discovery"`
+	Found     []struct {
+		IP   string `json:"ip"`
+		Name string `json:"name"`
+	} `json:"discovered"`
+	Spokes []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"spokes"`
+	Hub struct {
+		IP   string `json:"ip"`
+		Port int    `json:"port"`
+	} `json:"hub"`
+}
+
+func (c *Client) Nearby(ctx context.Context) (Nearby, error) {
+	var n Nearby
+	err := c.call(ctx, "GET", "/api/dashboard", nil, &n)
+	return n, err
+}
+
+// Adopt pairs the spoke found at ip with the hub, and returns its id.
+func (c *Client) Adopt(ctx context.Context, ip string) (string, error) {
+	var out struct {
+		ID string `json:"id"`
+	}
+	err := c.call(ctx, "POST", "/api/discovered/"+ip+"/adopt", nil, &out)
+	return out.ID, err
+}
+
+// Rename gives a spoke a new name (its screen takes it on its next check-in).
+func (c *Client) Rename(ctx context.Context, id, name string) error {
+	return c.call(ctx, "PATCH", "/api/spokes/"+id, map[string]string{"name": name}, nil)
+}
+
+// Code is for pairing a spoke on its own screen: valid until ExpiresAt (Unix seconds).
+type Code struct {
+	Code      string  `json:"code"`
+	ExpiresAt float64 `json:"expires_at"`
+}
+
+func (c *Client) PairingCode(ctx context.Context) (Code, error) {
+	var code Code
+	err := c.call(ctx, "POST", "/api/pairing", nil, &code)
+	return code, err
+}
