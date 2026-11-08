@@ -8,9 +8,28 @@ TouchStream becomes a system: spokes plus a hub that schedules, streams, records
   go live on their own, a recording of every broadcast filed in a folder named for it, editing, transcripts and
   captions, cleanup of old recordings, and one-command installers for Mac, Windows and Linux (plus Docker and
   Coolify).
-- **Spoke**: video to the hub over SRT, its own copy of every broadcast, a week of schedule kept so it can stream
-  straight to YouTube if the hub is down, recordings to a phone by QR code, a Wi-Fi menu, and a holding screen when
-  there's no HDMI. 1080p at 24, 25, 30 or 50 fps.
+- **Spoke**: an off-the-shelf box, the Luckfox PicoKVM, with nothing to build. Video to the hub over SRT, its own copy
+  of every broadcast uploaded as it's made, Go live, End and Record on its screen, and its recordings to a phone by QR
+  code. 1080p at 24, 25, 30, 50 or 60 fps; the hub offers each spoke only the rates it can capture. (The Raspberry Pi
+  spoke is retired; it's in the history at commit a12f6b2.)
+- **AI agents ask for their own access**: point one at the hub's `/agent` page, which says what the hub does and
+  how to ask; approve the request in the dashboard (with a code to check) and the agent collects its token, with no
+  copying. The page doubles as a skill the agent can keep.
+- **The TouchStream installer** for Mac and Windows: it installs the hub (or finds it, or one on another computer),
+  checks you have a Luckfox PicoKVM, then writes a microSD card for each spoke, paired with the hub so the box shows
+  up in the dashboard by itself. It only offers removable cards (never this computer's own disks), shows what's on
+  a card before erasing it, and reads every card back to check it.
+- **The editor**: a linear editor on tracks.
+  - Video and its linked sound (unlink them for L-cuts), music, titles, and a color adjustment layer.
+  - A cut tool; gaps that stay until you close them; trims and moves in place; transitions on cuts.
+  - Fade handles; undo.
+  - A media library for intros, slides and music, and brands (Settings) with an intro, an outro and a watermark.
+  - The assistant can make the whole edit, onto your timeline.
+- **Shorts**: a vertical short of any moment, picked by sentence from the transcript. The framing follows the
+  speaker, or shows the whole picture over a blur. Captions are burned in, in five fixed styles with the spoken word
+  lit, pauses can be taken out, and it publishes to YouTube as a Short. AI agents can make them too.
+- Fixed: the editor no longer resets your changes every few seconds.
+- Fixed: after an update, browsers sometimes kept showing the old dashboard.
 - The TouchStream mark, made by Cinderwire.
 
 

@@ -11,10 +11,11 @@ dependencies = [
     "httpx>=0.27",
     "tzdata",           # time zones for recurring broadcasts (Windows has none built in)
     "mcp>=2.3,<3",      # the MCP endpoint, for AI agents (mcp_server.py)
+    "pillow",           # titles in the editor, and shorts' captions
 ]
 
 [project.optional-dependencies]
-# Speech-to-text transcripts on the hub (Whisper)
+# Speech-to-text transcripts (Whisper), and shorts: speaker tracking and captions
 transcribe = ["faster-whisper>=1.1"]
 
 [project.scripts]

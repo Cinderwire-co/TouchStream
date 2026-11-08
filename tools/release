@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Makes a TouchStream release: everything hubs, spokes and the installer download from GitHub.
+#
+#   tools/release 0.2.0 NOTES.md      build it all, tag v0.2.0 and make a DRAFT GitHub release with it:
+#                                     look it over on GitHub, then Publish it there
+#   tools/release 0.2.0 --build-only  only build, into .dev/release/0.2.0/
+#
+# A release is:
+#   touchstream-spoke-V-picokvm.tar.gz    the spoke and its capture helper: what a hub gives its spokes to update
+#   touchstream-spoke-V-picokvm.json      its SHA-256 and signature, by TouchStream's release key
+#   touchstream-spoke-picokvm-V.img.xz    the card image the installer writes (+ .sha256)
+#   TouchStream-Installer-Mac.zip, TouchStream-Installer-Windows.exe
+# Hubs update from the tag's source (hub/install/*); GitHub builds the hub's Docker image (hub-image.yml).
+# Hubs only see a release once it's published, so a draft can be tested by hand first.
+#
+# It needs Go, Docker (the capture helper), the Wails CLI, gh (signed in), Luckfox's images
+# (tools/dev firmware) and the release key, ~/.config/touchstream/release-signing.key (or
+# TOUCHSTREAM_RELEASE_KEY), which never goes in this repository: keep a backup of it somewhere safe,
+# since every spoke out there trusts only it. Run it on main with nothing uncommitted.
+#
+# Copyright (c) 2025 Will Reeves and TouchStream Contributors
+# Licensed under the MIT License - see LICENSE file for details
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+KEY="${TOUCHSTREAM_RELEASE_KEY:-$HOME/.config/touchstream/release-signing.key}"
+WAILS="$(command -v wails || echo "$HOME/go/bin/wails")"
+say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
+die() { printf '\033[1;31mError:\033[0m %s\n' "$*" >&2; exit 1; }
+
+V="${1:-}"; NOTES="${2:-}"
+[[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "usage: tools/release VERSION (like 0.2.0) NOTES.md | --build-only"
+[ -n "$NOTES" ] || die "give the release notes (a Markdown file), or --build-only"
+BUILD_ONLY=0; [ "$NOTES" = --build-only ] && BUILD_ONLY=1
+[ "$BUILD_ONLY" = 1 ] || [ -f "$NOTES" ] || die "no notes at $NOTES"
+OUT="$ROOT/.dev/release/$V"
+
+# ---- The key spokes trust ----
+[ -f "$KEY" ] || die "no release key at $KEY"
+public="$(cd "$ROOT/spoke" && go run ./cmd/touchstream-release public "$KEY")"
+grep -q "var PublicKey = \"$public\"" "$ROOT/spoke/internal/update/update.go" \
+    || die "the release key isn't the one spokes trust (spoke/internal/update PublicKey)"
+
+if [ "$BUILD_ONLY" = 0 ]; then
+    [ "$(git -C "$ROOT" branch --show-current)" = main ] || die "releases are made from main"
+    [ -z "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ] || die "commit or stash your changes first"
+    git -C "$ROOT" rev-parse -q --verify "refs/tags/v$V" >/dev/null && die "v$V is tagged already"
+    gh auth status >/dev/null 2>&1 || die "sign in to GitHub first: gh auth login"
+fi
+
+# ---- The version, everywhere ----
+sed -i '' "s/^VERSION = \".*\"/VERSION = \"$V\"/" "$ROOT/hub/touchstream_hub/__init__.py"
+sed -i '' "s/^version = \".*\"/version = \"$V\"/" "$ROOT/hub/pyproject.toml"
+
+rm -rf "$OUT"; mkdir -p "$OUT"
+spoke_pkg=github.com/Cinderwire-co/TouchStream/spoke/internal/spoke
+
+# ---- The spoke, its update and its card image ----
+say "Building the spoke $V"
+(cd "$ROOT/spoke" && GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 \
+    go build -trimpath -ldflags "-s -w -X $spoke_pkg.Version=$V" -o "$OUT/touchstream-spoke" ./cmd/touchstream-spoke)
+say "Building the capture helper"
+"$ROOT/spoke/capture/build" >/dev/null
+cp "$ROOT/spoke/build/touchstream-capture" "$OUT/touchstream-capture"
+bundle="touchstream-spoke-$V-picokvm.tar.gz"
+tar -C "$OUT" -czf "$OUT/$bundle" touchstream-spoke touchstream-capture
+(cd "$ROOT/spoke" && go run ./cmd/touchstream-release sign "$KEY" "$V" "$OUT/$bundle") > "$OUT/touchstream-spoke-$V-picokvm.json"
+
+say "Making the card image"
+lite="$(find "$ROOT/.dev/picokvm/Lite" -name '*.img' 2>/dev/null | head -1)"
+[ -n "$lite" ] || die "Luckfox's images first: tools/dev firmware"
+python3 -I "$ROOT/tools/picokvm_image.py" build "$lite" "$OUT/touchstream-spoke" "$OUT/touchstream-spoke-picokvm-$V.img" \
+    --capture "$OUT/touchstream-capture" --xz
+rm -f "$OUT/touchstream-spoke-picokvm-$V.img" "$OUT/touchstream-spoke-picokvm-$V.img.sha256"
+
+# ---- The installer ----
+say "Building the installer"
+[ -x "$WAILS" ] || die "the Wails CLI first: go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1"
+flags="-X main.Version=$V"
+(cd "$ROOT/installer" && "$WAILS" build -clean -platform darwin/universal -skipbindings -ldflags "$flags" >/dev/null)
+ditto -c -k --keepParent "$ROOT/installer/build/bin/TouchStream Installer.app" "$OUT/TouchStream-Installer-Mac.zip"
+(cd "$ROOT/installer" && "$WAILS" build -platform windows/amd64 -skipbindings -ldflags "$flags" >/dev/null)
+cp "$ROOT/installer/build/bin/TouchStream Installer.exe" "$OUT/TouchStream-Installer-Windows.exe"
+rm -f "$OUT/touchstream-spoke" "$OUT/touchstream-capture"
+
+(cd "$OUT" && ls -lh | sed 1d)
+if [ "$BUILD_ONLY" = 1 ]; then
+    git -C "$ROOT" checkout -- hub/touchstream_hub/__init__.py hub/pyproject.toml
+    say "Built in $OUT (nothing tagged or uploaded)"
+    exit 0
+fi
+
+# ---- Tag it and make the draft ----
+git -C "$ROOT" commit -q -m "TouchStream $V" -- hub/touchstream_hub/__init__.py hub/pyproject.toml || true
+git -C "$ROOT" tag -a "v$V" -m "TouchStream $V"
+say "Pushing main and v$V"
+git -C "$ROOT" push -q origin main "v$V"
+gh release create "v$V" --repo Cinderwire-co/TouchStream --draft --title "TouchStream $V" --notes-file "$NOTES" \
+    "$OUT"/touchstream-spoke-"$V"-picokvm.{tar.gz,json} "$OUT"/touchstream-spoke-picokvm-"$V".img.xz{,.sha256} \
+    "$OUT"/TouchStream-Installer-{Mac.zip,Windows.exe}
+say "Drafted: https://github.com/Cinderwire-co/TouchStream/releases (publish it there when it looks right)"

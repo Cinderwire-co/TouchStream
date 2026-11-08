@@ -92,6 +92,19 @@ class Broadcasts:
                                 event_id, channel_id)
         self.sync(event_id, update_existing=True)
 
+    def move(self, event_id, spoke):
+        """An upcoming broadcast to another spoke: each YouTube broadcast is bound to that spoke's stream
+        on its channel, so its watch link stays the same."""
+        self.db.run('UPDATE events SET spoke_id = ? WHERE id = ?', spoke['id'], event_id)
+        for target in self.targets(event_id):
+            def work(channel, target=target):
+                dest = self._destination_for(spoke, channel)
+                if target['broadcast_id']:
+                    self.youtube.bind_broadcast(channel, target['broadcast_id'], dest['yt_stream_id'])
+                self.db.run('UPDATE event_targets SET destination_id = ? WHERE id = ?', dest['id'], target['id'])
+            self._try(target, work)
+        self.sync(event_id)
+
     def set_thumbnail(self, event_id, image, content_type):
         event = self.event(event_id)
         folder = settings.DATA_DIR / 'thumbnails'
@@ -212,9 +225,10 @@ class Broadcasts:
         now = time.time()
         for event in self.db.all("SELECT * FROM events WHERE state = 'scheduled' AND auto_start = 1 "
                                  "AND start_at - ? <= ?", LEAD_SECONDS, now):
+            spoke = self.db.spoke(event['spoke_id'])
             if event['end_at'] and event['end_at'] <= now:
                 self.db.run("UPDATE events SET state = 'ended' WHERE id = ?", event['id'])   # missed entirely
-            else:
+            elif spoke and not spoke['removed_at']:   # (a removed spoke's broadcast waits to be moved)
                 self.go_live(event['id'])
         for event in self.db.all("SELECT * FROM events WHERE state = 'live'"):
             spoke = self.db.spoke(event['spoke_id'])

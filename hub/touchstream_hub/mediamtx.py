@@ -28,13 +28,16 @@ authHTTPExclude:
 api: true
 apiAddress: 127.0.0.1:{api_port}
 
-# Internal only: the hub's restreamers read over RTSP, the dashboard plays HLS through the hub
+# Internal only: the hub's restreamers read HLS (it keeps the spoke's timestamps: RTSP puts sound and
+# picture out of step), made as soon as a stream arrives so a broadcast starts at once; the dashboard
+# plays it through the hub
 rtsp: true
 rtspTransports: [tcp]
 rtspAddress: 127.0.0.1:{rtsp_port}
 hls: true
 hlsAddress: 127.0.0.1:{hls_port}
 hlsVariant: mpegts
+hlsAlwaysRemux: true
 webrtc: false
 moq: false
 

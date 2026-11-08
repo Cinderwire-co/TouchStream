@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# TouchStream spoke dev helper: build the spoke and run it in an emulated PicoKVM.
+#
+#   tools/dev build          cross-compile for the PicoKVM (linux/arm/v7, static) into build/
+#   tools/dev test           run the tests
+#   tools/dev clip           make the emulator's test clip (1080p30 H.264 + a 440 Hz tone), once
+#   tools/dev emulate        build, then run it in an ARMv7 container held to the PicoKVM's
+#                            1 core and 256 MB, replaying the clip as its "HDMI input"
+#   tools/dev hubless        run a second emulator beside it, with no hub, on port 6078
+#   tools/dev pair HUB CODE  pair the emulated spoke with a hub (CODE from Add spoke)
+#   tools/dev logs           follow the emulator's log
+#   tools/dev stop           stop the emulator
+#
+# The emulator keeps its settings and recordings in .emulator/ (git-ignored), like the card in
+# the real box. Needs Go and Docker Desktop. ADDRESS=... sets the address phones use for it,
+# DATA=... another folder for its settings and recordings, and CARD=... a file with the
+# installer's settings block, which pairs it with a hub at its first start (the repo's tools/dev
+# does this). PICOKVM_SYSTEM=... (the system partition of Luckfox's microSD image) runs it on the
+# PicoKVM's own system instead of Alpine: its BusyBox, uClibc and ffmpeg 4.4. SOURCE=hdmi takes the
+# box's way in, the capture helper (a stand-in playing the clip's H.264) and ffmpeg adding the sound
+# (a tone), in place of replaying the clip as it is.
+#
+# Copyright (c) 2025 Will Reeves and TouchStream Contributors
+# Licensed under the MIT License - see LICENSE file for details
+
+set -euo pipefail
+
+SPOKE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+NAME=touchstream-spoke-emulator
+IMAGE=touchstream-spoke-emulator
+CLIP="$SPOKE/testdata/clip.ts"
+
+build() {
+    mkdir -p "$SPOKE/build"
+    for cmd in touchstream-spoke touchstream-capture-standin; do
+        (cd "$SPOKE" && GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 \
+            go build -trimpath -ldflags "-s -w" -o build/$cmd ./cmd/$cmd)
+    done
+    echo "Built build/touchstream-spoke ($(du -h "$SPOKE/build/touchstream-spoke" | cut -f1))"
+}
+
+clip() {
+    mkdir -p "$SPOKE/testdata"
+    # What the RV1106's encoder will send: Main profile with no B-frames, a keyframe every 2 s, AAC stereo
+    ffmpeg -hide_banner -loglevel error -y \
+        -f lavfi -i testsrc2=size=1920x1080:rate=30 -f lavfi -i "sine=frequency=440:sample_rate=48000" -t 30 \
+        -c:v libx264 -profile:v main -bf 0 -level 4 -preset veryfast -pix_fmt yuv420p \
+        -b:v 6M -maxrate 6M -bufsize 6M -g 60 -keyint_min 60 -sc_threshold 0 \
+        -c:a aac -b:a 192k -ac 2 -af volume=0.1 -f mpegts "$CLIP"
+    echo "Made testdata/clip.ts ($(du -h "$CLIP" | cut -f1))"
+}
+
+run_in() { docker exec "$NAME" /opt/touchstream/touchstream-spoke "$1" -data /userdata/touchstream "${@:2}"; }
+
+case "${1:-}" in
+    build) build ;;
+    test) (cd "$SPOKE" && go vet ./... && go test ./...) ;;
+    clip) clip ;;
+    emulate|hubless)
+        build
+        [ -f "$CLIP" ] || clip
+        port=6077 data="$SPOKE/.emulator"
+        if [ "$1" = hubless ]; then NAME=$NAME-hubless port=6078 data="$SPOKE/.emulator-hubless"; fi
+        data="${DATA:-$data}"
+        source=(-source replay:/opt/clip.ts)
+        if [ "${SOURCE:-}" = hdmi ]; then
+            source=(-screen-web -source hdmi -capture "/opt/touchstream/touchstream-capture-standin /opt/clip.ts"
+                -audio "-re -f lavfi -i sine=frequency=440:sample_rate=48000")
+        fi
+        card=()   # the installer's settings, as on a card it wrote
+        if [ -n "${CARD:-}" ]; then card=(-v "$CARD:/opt/card.img:ro"); fi
+        mkdir -p "$data"
+        image="$IMAGE"
+        if [ -n "${PICOKVM_SYSTEM:-}" ]; then
+            image="$IMAGE:picokvm"
+            if ! docker image inspect "$image" >/dev/null 2>&1; then
+                echo "Building the emulator on the PicoKVM's own system (once)"
+                tar -cf - -C "$(dirname "$PICOKVM_SYSTEM")" "$(basename "$PICOKVM_SYSTEM")" -C "$SPOKE/tools/emulator" picokvm.Dockerfile |
+                    docker build -q --platform linux/arm/v7 -f picokvm.Dockerfile --build-arg SYSTEM="$(basename "$PICOKVM_SYSTEM")" \
+                        -t "$image" - >/dev/null
+            fi
+        else
+            docker image inspect "$IMAGE" >/dev/null 2>&1 ||
+                docker build -q --platform linux/arm/v7 -t "$IMAGE" "$SPOKE/tools/emulator" >/dev/null
+        fi
+        # Phones reach the emulator at this computer's address, not the container's
+        address="${ADDRESS:-$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I | cut -d' ' -f1)}"
+        tz="$(readlink /etc/localtime | sed 's|.*zoneinfo/||')"
+        docker rm -f "$NAME" >/dev/null 2>&1 || true
+        docker run -d --name "$NAME" --platform linux/arm/v7 --hostname picokvm-emulator \
+            --cpus 1 --memory 256m --memory-swap 256m -p "$port:6077" -e TZ="${tz:-UTC}" \
+            -v "$SPOKE/build:/opt/touchstream:ro" -v "$CLIP:/opt/clip.ts:ro" -v "$data:/userdata" ${card[@]+"${card[@]}"} \
+            "$image" /opt/touchstream/touchstream-spoke run -data /userdata/touchstream "${source[@]}" \
+            -address "$address:$port" ${CARD:+-card /opt/card.img} >/dev/null
+        echo "Emulator running. Its screen: http://localhost:$port/screen (from a phone: http://$address:$port/screen)"
+        ;;
+    pair) shift; run_in pair "$@" ;;
+    logs) docker logs -f "$NAME" ;;
+    stop) docker rm -f "$NAME" "$NAME-hubless" >/dev/null 2>&1; echo "Emulators stopped" ;;
+    *) sed -n '2,15p' "$0"; exit 1 ;;
+esac

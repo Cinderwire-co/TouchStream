@@ -46,11 +46,12 @@ export function TranscriptPage({ eventId }) {
   const shown = segments ? segments.map((s, i) => [s, i]).filter(([s]) => !query || s.text.toLowerCase().includes(query.toLowerCase())) : [];
 
   return html`<div>
-    <a class="crumb" href=${`#/spokes/${event.spoke_id}`}><${Icon} name="back" size=${15} /> ${event.title}</a>
+    <a class="crumb" href=${`#/broadcast/${event.id}`}><${Icon} name="back" size=${15} /> ${event.title}</a>
     <div class="page-head"><div><h1>Transcript</h1>
       <p class="muted">Made on this hub with Whisper: nothing leaves your server. Correct anything it misheard, then
         download captions for YouTube Studio or any player.</p></div>
       ${t && t.status === 'done' && html`<div class="actions">
+        <a class="btn small" href=${`#/edit/${eventId}/shorts`}>Make a short</a>
         ${['srt', 'vtt', 'txt'].map((f) => html`<a class="btn ghost small" href=${`/api/events/${eventId}/transcript.${f}`} download>.${f}</a>`)}
       </div>`}
     </div>

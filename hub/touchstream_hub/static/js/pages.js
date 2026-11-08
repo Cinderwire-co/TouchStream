@@ -1,55 +1,126 @@
 // Settings page
 import { html, useState, useEffect } from '../vendor/preact-htm.module.js';
-import { ago, api, bytes, reveal, revealLabel, CINDERWIRE } from './lib.js';
-import { Avatar, Switch } from './ui.js';
+import { ago, api, bytes, reveal, revealLabel, usePoll, CINDERWIRE } from './lib.js';
+import { Avatar, Icon, Modal, Switch } from './ui.js';
 import { Select } from './fields.js';
 import { confirmAction, toast } from './dialogs.js';
 import { AssistantSettings } from './assistant.js';
+import { BrandsSettings } from './brands.js';
+import { ConnectChannelModal } from './schedule.js';
 
 function YouTubeSettings() {
   const [yt, setYt] = useState(null);
   const [form, setForm] = useState({ client_id: '', client_secret: '' });
-  const [msg, setMsg] = useState('');
+  const [connecting, setConnecting] = useState(false);
   const load = () => api('GET', '/api/youtube').then((d) => { setYt(d); setForm({ client_id: d.client_id, client_secret: '' }); });
   useEffect(() => { load(); }, []);
   if (!yt) return null;
   const save = async (e) => {
     e.preventDefault();
-    try { await api('PUT', '/api/youtube/client', form); setMsg('Saved'); load(); } catch (err) { setMsg(err.message); }
+    try { await api('PUT', '/api/youtube/client', form); toast('Saved', 'ok'); load(); } catch (err) { toast(err); }
   };
   const disconnect = async (c) => {
-    if (!(await confirmAction({ title: `Disconnect ${c.title}?`, message: 'Its scheduled broadcasts stop streaming to it.',
+    if (!(await confirmAction({ title: `Disconnect ${c.title}?`, message: 'Its scheduled broadcasts stop streaming to it, and the hub gives up its access to the channel at Google.',
       confirm: 'Disconnect', danger: true }))) return;
     await api('DELETE', `/api/youtube/channels/${c.id}`); load();
   };
+  const client = html`<form class="form" onSubmit=${save}>
+    <ol class="steps small">
+      <li>In <a href="https://console.cloud.google.com" target="_blank" rel="noopener">Google Cloud Console</a>, create a project
+        and enable <b>YouTube Data API v3</b>.</li>
+      <li>Under <b>Google Auth Platform</b>, set up an <b>External</b> app and <b>publish</b> it (testing-mode sign-ins expire after 7 days).</li>
+      <li>Create a client of type <b>TVs and Limited Input devices</b> and paste its ID and secret here.</li>
+    </ol>
+    <div class="form-row">
+      <label class="field"><span>Client ID</span><input type="text" class="mono" value=${form.client_id}
+        onInput=${(e) => setForm({ ...form, client_id: e.target.value })} /></label>
+      <label class="field"><span>Client secret ${yt.configured ? '(saved; leave empty to keep)' : ''}</span>
+        <input type="password" autocomplete="off" value=${form.client_secret}
+          onInput=${(e) => setForm({ ...form, client_secret: e.target.value })} /></label>
+    </div>
+    <div><button class="btn">Save</button></div>
+  </form>`;
   return html`<div class="panel form">
-    <h2>YouTube</h2>
-    <p class="muted">Connecting channels lets the hub schedule broadcasts, set titles and thumbnails, and create
-      stream keys for you. It uses your own Google OAuth client, so your hub talks to YouTube directly.</p>
-    ${yt.from_env ? html`<p class="muted">The OAuth client is set by environment variables.</p>`
-    : html`<form class="form" onSubmit=${save}>
-      <ol class="steps small">
-        <li>In <a href="https://console.cloud.google.com" target="_blank" rel="noopener">Google Cloud Console</a>, create a project
-          and enable <b>YouTube Data API v3</b>.</li>
-        <li>Under <b>Google Auth Platform</b>, set up an <b>External</b> app and <b>publish</b> it (testing-mode sign-ins expire after 7 days).</li>
-        <li>Create a client of type <b>TVs and Limited Input devices</b> and paste its ID and secret here.</li>
-      </ol>
-      <div class="form-row">
-        <label class="field"><span>Client ID</span><input type="text" class="mono" value=${form.client_id}
-          onInput=${(e) => setForm({ ...form, client_id: e.target.value })} /></label>
-        <label class="field"><span>Client secret ${yt.configured ? '(saved; leave empty to keep)' : ''}</span>
-          <input type="password" autocomplete="off" value=${form.client_secret}
-            onInput=${(e) => setForm({ ...form, client_secret: e.target.value })} /></label>
-      </div>
-      <div><button class="btn">Save</button> <span class="muted small">${msg}</span></div>
-    </form>`}
-    ${yt.channels.length > 0 && html`<div>
-      <span class="eyebrow">Connected channels</span>
-      ${yt.channels.map((c) => html`<div class="row"><${Avatar} channel=${c} size=${28} />
-        <div class="grow"><b>${c.title}</b>${c.error && html`<div class="error small">${c.error}</div>`}</div>
-        <button class="btn ghost small" onClick=${() => disconnect(c)}>Disconnect</button></div>`)}
-    </div>`}
-    ${yt.configured && html`<p class="muted small">Connect channels from the <a href="#/schedule">Schedule</a> page.</p>`}
+      <div class="panel-head"><h2>Channels</h2>
+        ${yt.configured && html`<button class="btn ghost small" onClick=${() => setConnecting(true)}><${Icon} name="plus" size=${14} /> Connect channel</button>`}</div>
+      <p class="muted">The hub creates each broadcast on the channels you pick, with its title, description and
+        thumbnail, and makes the stream keys itself. It talks to YouTube directly: nothing goes through Cinderwire.</p>
+      ${yt.channels.length > 0 ? html`<div>${yt.channels.map((c) => html`<div class="row"><${Avatar} channel=${c} size=${28} />
+          <div class="grow"><b>${c.title}</b>${c.error && html`<div class="error small">${c.error}</div>`}</div>
+          <button class="btn ghost small" onClick=${() => disconnect(c)}>Disconnect</button></div>`)}</div>`
+        : html`<p class="muted small">${yt.configured ? 'No channels yet.' : 'Add your Google OAuth client below first.'}${' '}
+            Without YouTube, every broadcast is still recorded to download and upload yourself.</p>`}
+    </div>
+    <div class="panel form">
+      <h2>Google sign-in</h2>
+      ${yt.from_env ? html`<p class="muted">The OAuth client is set by environment variables.</p>`
+        : yt.configured ? html`<p class="muted">Channels sign in with your own Google OAuth client:
+            <span class="mono small">${yt.client_id}</span></p>
+          <details class="more"><summary>Change the OAuth client</summary>${client}</details>`
+        : html`<p class="muted">Connecting channels needs a Google OAuth client of your own. It takes about ten minutes, once.</p>${client}`}
+    </div>
+    ${connecting && html`<${ConnectChannelModal} onClose=${() => { setConnecting(false); load(); }} />`}`;
+}
+
+const INSTALL = { macos: 'the Mac installer', windows: 'the Windows installer', linux: 'the Linux installer', docker: 'Docker', source: 'source (a developer’s copy)' };
+
+/** Updates: the hub's version, whether it updates itself, and each spoke's. */
+function UpdatesSettings() {
+  const [u, setU] = useState(null);
+  const [checking, setChecking] = useState(false);
+  const load = () => api('GET', '/api/updates').then(setU).catch(() => {});
+  const moving = u && (u.applying || u.spokes.some((s) => ['updating', 'restarting'].includes(s.update.state)));
+  usePoll(load, moving ? 3000 : 30000, [moving]);
+  if (!u) return null;
+  const act = async (method, path, body) => { try { setU(await api(method, path, body)); } catch (err) { toast(err); } };
+  const check = async () => { setChecking(true); await act('POST', '/api/updates/check'); setChecking(false); };
+  const status = u.applying ? html`<span class="chip ember">Updating to ${u.applying.version}…</span>`
+    : u.available ? html`<span class="chip ember">${u.latest} is ready</span>`
+    : u.latest || u.checked_at ? html`<span class="chip ok">Up to date</span>` : null;
+  return html`<div class="panel form">
+    <div class="panel-head"><h2>Updates</h2>${status}</div>
+    ${!u.enabled ? html`<p class="muted">Updates are turned off for this hub (TOUCHSTREAM_UPDATES).</p>` : html`
+    <div class="update-line">
+      <div class="grow"><b>TouchStream ${u.version}</b>
+        <div class="muted small">${u.checked_at ? `Checked ${ago(u.checked_at)}` : 'Not checked yet'}</div></div>
+      <button class="btn ghost small" disabled=${checking} onClick=${check}>${checking ? 'Checking…' : 'Check now'}</button>
+      ${u.available && u.can_update_self && !u.applying && html`<button class="btn primary small" disabled=${u.requested}
+        onClick=${() => act('POST', '/api/updates/apply')}>${u.requested ? 'Waiting…' : `Update to ${u.latest}`}</button>`}
+    </div>
+    ${u.error && html`<p class="error small">${u.error}</p>`}
+    ${u.available && u.requested && u.waiting_for && html`<p class="muted small">It updates as soon as nothing’s going on: ${u.waiting_for}.</p>`}
+    ${u.available && !u.can_update_self && html`<p class="muted small">${u.install === 'docker'
+      ? html`This hub runs in Docker, so it can’t update itself: pull <span class="mono">${u.docker_image}:latest</span> and start it again (on Coolify, choose Redeploy). Its spokes still update themselves.`
+      : 'This hub runs from source: pull the new version and start it again.'}</p>`}
+    ${u.available && u.notes && html`<details class="more"><summary>What’s new in ${u.latest}</summary>
+      <div class="notes">${u.notes}</div>${u.notes_url && html`<a href=${u.notes_url} target="_blank" rel="noopener">The release on GitHub</a>`}</details>`}
+    <div class="check-row"><div><b>Install updates automatically</b>
+      <div class="muted small">The hub and its spokes update themselves when nothing’s live or due within the hour. Off: you’re told here and at the top of every page, and choose when.</div></div>
+      <${Switch} checked=${u.auto} onChange=${(v) => act('PUT', '/api/updates/auto', { auto: v })} label="Install updates automatically" /></div>
+    ${u.spokes.length > 0 && html`<div><span class="eyebrow">Spokes</span>
+      ${u.spokes.map((s) => html`<${SpokeVersion} key=${s.id} spoke=${s} auto=${u.auto} update=${() => act('POST', `/api/spokes/${s.id}/update`)} />`)}</div>`}`}
+  </div>`;
+}
+
+/** A spoke's version, on the Updates panel and its own page. */
+export function SpokeVersion({ spoke, auto, update }) {
+  const v = spoke.update || {};
+  const pct = v.progress != null ? ` ${Math.round(v.progress * 100)}%` : '';
+  const [label, action] = {
+    current: [html`<span class="ok-text">Up to date</span>`],
+    available: [auto || v.requested ? `Updates to ${v.hub_version} when it’s idle` : `${v.hub_version} is ready`,
+      !auto && !v.requested && 'Update'],
+    updating: [`Updating to ${v.hub_version}…${pct}`],
+    restarting: ['Restarting…'],
+    failed: [html`<span class="warn-text">${v.hub_version} didn’t start, so it went back to ${v.version}</span>`, v.requested ? null : 'Try again'],
+    ahead: ['Newer than the hub'],
+    developer: ['A developer’s build'],
+    unknown: ['Not heard from yet'],
+  }[v.state] || [''];
+  return html`<div class="row">
+    <div class="grow min0"><b>${spoke.name}</b> <span class="muted small mono">${v.version || ''}</span>
+      <div class="muted small">${spoke.online === false && v.state !== 'restarting' ? 'Offline · ' : ''}${label}</div></div>
+    ${action && html`<button class="btn ghost small" onClick=${update}>${action}</button>`}
   </div>`;
 }
 
@@ -179,11 +250,18 @@ function ApiAccess() {
   const [made, setMade] = useState(null);
   const [copied, setCopied] = useState(false);
   const [hub, setHub] = useState(null);
-  useEffect(() => { api('GET', '/api/tokens').then(setTokens); api('GET', '/api/hub').then(setHub).catch(() => {}); }, []);
+  useEffect(() => {
+    const load = () => api('GET', '/api/tokens').then(setTokens);
+    load();
+    api('GET', '/api/hub').then(setHub).catch(() => {});
+    addEventListener('ts-tokens', load);   // an agent's request approved (AccessPrompt)
+    return () => removeEventListener('ts-tokens', load);
+  }, []);
   if (!tokens) return null;
   // On the hub's own computer the page is at localhost; agents elsewhere need its network address
   const here = ['localhost', '127.0.0.1'].includes(location.hostname) && hub && hub.ip;
-  const mcpUrl = here ? `http://${hub.ip}:${hub.port}/mcp` : `${location.origin}/mcp`;
+  const origin = here ? `http://${hub.ip}:${hub.port}` : location.origin;
+  const mcpUrl = `${origin}/mcp`;
   const create = async (e) => {
     e.preventDefault();
     try {
@@ -204,6 +282,8 @@ function ApiAccess() {
     <p class="muted">Let scripts and AI agents use this hub: schedule, go live, edit, publish. Give each one its own
       token, with only the access it needs. Agents that speak MCP connect to <b class="mono">${mcpUrl}</b>;
       anything else can use the API described at <a href="/api/openapi.json" target="_blank" rel="noopener">/api/openapi.json</a>.</p>
+    <p class="muted">An AI agent can ask for its own token: tell it to read <b class="mono">${origin}/agent</b>. Its
+      request shows up here to approve, with a code to check, and it gets the token itself.</p>
     ${made && html`<div class="new-token">
       <b>Copy this token now: it isn't shown again.</b>
       <div class="copy"><code>${made}</code><button class="btn small" onClick=${copy}>${copied ? 'Copied' : 'Copy'}</button></div>
@@ -224,56 +304,129 @@ function ApiAccess() {
   </div>`;
 }
 
-export function SettingsPage() {
-  const [s, setS] = useState(null);
-  const [host, setHost] = useState('');
+/** An agent asking for a token (POST /api/access), on whatever page is open. Approved, it collects the token
+ * itself; closed, it waits (for ten minutes) until the next visit. */
+export function AccessPrompt() {
+  const [waiting, setWaiting] = useState([]);
+  const [later, setLater] = useState([]);
+  const [scope, setScope] = useState(null);
+  usePoll(() => api('GET', '/api/access-requests').then(setWaiting), 3000);
+  const r = waiting.find((x) => !later.includes(x.id));
+  useEffect(() => { setScope(r ? r.scope : null); }, [r && r.id]);
+  if (!r || !scope) return null;
+  const answer = async (approve) => {
+    try {
+      await api('POST', `/api/access-requests/${r.id}/${approve ? 'approve' : 'deny'}`, approve ? { scope } : undefined);
+      toast(approve ? `${r.name} can use the hub now` : `${r.name} was turned away`, 'ok');
+      if (approve) dispatchEvent(new Event('ts-tokens'));
+    } catch (err) { toast(err); }
+    setWaiting(waiting.filter((x) => x.id !== r.id));
+  };
+  const about = Object.fromEntries(SCOPES.map(([v, l, what]) => [v, { l, what }]));
+  return html`<${Modal} title="An AI agent is asking for access" onClose=${() => setLater([...later, r.id])}>
+    <p><b>${r.name}</b> is asking to use this hub${['127.0.0.1', '::1'].includes(r.ip) ? ' from this computer'
+      : r.ip ? html` from <span class="mono">${r.ip}</span>` : ''}.
+      Approve it only if it's showing you this same code:</p>
+    <div class="code">${r.code}</div>
+    <div class="field access-scope"><span>Access</span>
+      <div class="segmented wide" role="group" aria-label="Access">${SCOPES.map(([v, l]) => html`<button type="button"
+        class=${scope === v ? 'on' : ''} onClick=${() => setScope(v)}>${l}</button>`)}</div>
+      <span class="muted small">${about[scope].what}${scope !== r.scope ? ` (it asked for ${about[r.scope].l.toLowerCase()})` : ''}.
+        Revoke it any time, in Settings.</span></div>
+    <div class="modal-foot split">
+      <button class="btn ghost" onClick=${() => answer(false)}>Deny</button>
+      <button class="btn primary" onClick=${() => answer(true)}>Approve</button>
+    </div>
+  </${Modal}>`;
+}
+
+function Password({ s }) {
   const [pw, setPw] = useState({ current: '', new: '' });
-  const [msg, setMsg] = useState('');
-  useEffect(() => { api('GET', '/api/settings').then((d) => { setS(d); setHost(d.public_host); }); }, []);
-  if (!s) return null;
-  const saveHost = async (e) => { e.preventDefault(); await api('PATCH', '/api/settings', { public_host: host }); setMsg('Saved'); };
-  const savePw = async (e) => {
+  const save = async (e) => {
     e.preventDefault();
-    try { await api('POST', '/api/password', pw); setPw({ current: '', new: '' }); setMsg('Password changed'); }
-    catch (err) { setMsg(err.message); }
+    try { await api('POST', '/api/password', pw); setPw({ current: '', new: '' }); toast('Password changed', 'ok'); }
+    catch (err) { toast(err); }
+  };
+  return html`<form class="panel form" onSubmit=${save}>
+    <h2>Password</h2>
+    ${s.password_from_env ? html`<p class="muted">The password is set by the TOUCHSTREAM_ADMIN_PASSWORD environment variable.</p>`
+    : html`<div class="form-row">
+      <label class="field"><span>Current password</span><input type="password" autocomplete="current-password" value=${pw.current} onInput=${(e) => setPw({ ...pw, current: e.target.value })} /></label>
+      <label class="field"><span>New password</span><input type="password" autocomplete="new-password" value=${pw.new} onInput=${(e) => setPw({ ...pw, new: e.target.value })} /></label>
+    </div><div><button class="btn" disabled=${!pw.current || pw.new.length < 8}>Change password</button></div>`}
+  </form>`;
+}
+
+function Network({ s }) {
+  const [host, setHost] = useState(s.public_host || '');
+  const save = async (e) => {
+    e.preventDefault();
+    try { await api('PATCH', '/api/settings', { public_host: host }); s.public_host = host; toast('Saved', 'ok'); } catch (err) { toast(err); }
   };
   const srtHost = host || s.detected_host || "this computer's IP address";
-  return html`<div>
-    <div class="page-head"><div><h1>Settings</h1><p class="muted">TouchStream Hub ${s.version}</p></div></div>
-    <${YouTubeSettings} />
-    <${AssistantSettings} changed=${() => dispatchEvent(new Event('ts-auth'))} />
-    <${RecordingsFolder} s=${s} saved=${() => setMsg('Saved')} />
-    <${OldRecordings} saved=${() => setMsg('Saved')} />
-    <${TranscriptionSettings} options=${s.transcription} saved=${() => setMsg('Saved')} />
-    <form class="panel form" onSubmit=${saveHost}>
+  return html`<form class="panel form" onSubmit=${save}>
       <h2>How spokes reach this hub</h2>
       <p class="muted">Spokes send video over SRT to <b class="mono">${srtHost}:${s.srt_port}</b> (UDP).
         If this hub is behind a proxy or its address differs for spokes, set it here.</p>
       <label class="field"><span>Public address for spokes</span>
         <input type="text" class="mono" placeholder=${s.detected_host} value=${host} onInput=${(e) => setHost(e.target.value)} /></label>
-      <div><button class="btn">Save</button></div>
+      <div><button class="btn" disabled=${host === (s.public_host || '')}>Save</button></div>
     </form>
     <div class="panel form">
       <h2>Other encoders</h2>
       <p class="muted">OBS, vMix or an ATEM can feed the hub too: stream to${' '}
         <b class="mono">${`rtmp://${srtHost}:${s.rtmp_port}/spoke/<spoke id>`}</b> with the spoke's id as user name and its stream key as password.</p>
+      <div class="kv small">
+        <span class="muted">SRT, from spokes</span><span class="mono">${s.srt_port}/udp</span>
+        <span class="muted">RTMP, from encoders</span><span class="mono">${s.rtmp_port}/tcp</span>
+      </div>
+    </div>`;
+}
+
+function AboutHub({ s }) {
+  return html`<div class="panel form">
+    <h2>This hub</h2>
+    <div class="kv small">
+      <span class="muted">Version</span><span>TouchStream ${s.version}</span>
+      <span class="muted">Installed with</span><span>${INSTALL[s.install] || s.install}</span>
+      <span class="muted">Its data</span><span class="mono">${s.data_dir}</span>
     </div>
-    <${ApiAccess} />
-    <form class="panel form" onSubmit=${savePw}>
-      <h2>Password</h2>
-      ${s.password_from_env ? html`<p class="muted">The password is set by the TOUCHSTREAM_ADMIN_PASSWORD environment variable.</p>`
-      : html`<div class="form-row">
-        <label class="field"><span>Current password</span><input type="password" value=${pw.current} onInput=${(e) => setPw({ ...pw, current: e.target.value })} /></label>
-        <label class="field"><span>New password</span><input type="password" value=${pw.new} onInput=${(e) => setPw({ ...pw, new: e.target.value })} /></label>
-      </div><div><button class="btn">Change password</button></div>`}
-    </form>
-    <div class="panel"><div class="kv small">
-      <span class="muted">Data folder</span><span class="mono">${s.data_dir}</span>
-      <span class="muted">SRT ingest</span><span class="mono">${s.srt_port}/udp</span>
-      <span class="muted">RTMP ingest</span><span class="mono">${s.rtmp_port}/tcp</span>
-    </div></div>
-    ${msg && html`<p class="muted" style="margin-top:14px">${msg}</p>`}
-    <a class="made-by" href="https://cinderwire.co" target="_blank" rel="noopener">
-      <img src=${CINDERWIRE} alt="" /> TouchStream ${s.version} · made by Cinderwire</a>
+    <a class="made-by" href="https://cinderwire.co/touchstream" target="_blank" rel="noopener">
+      <img src=${CINDERWIRE} alt="" /> TouchStream is made by Cinderwire</a>
+  </div>`;
+}
+
+// The sections of Settings, each at #/settings/<key>
+const SECTIONS = [
+  ['general', 'General', 'Updates, password and this hub'],
+  ['youtube', 'YouTube', 'Channels and Google sign-in'],
+  ['recordings', 'Recordings', 'Where they go, how long they stay, transcripts'],
+  ['brands', 'Brands', 'Intros, outros and watermarks'],
+  ['ai', 'Assistant and API', 'The assistant, AI agents and scripts'],
+  ['network', 'Network', 'How spokes and encoders reach the hub'],
+];
+
+export function SettingsPage({ section }) {
+  const [s, setS] = useState(null);
+  useEffect(() => { api('GET', '/api/settings').then(setS); }, []);
+  if (!s) return null;
+  const key = SECTIONS.some(([k]) => k === section) ? section : 'general';
+  const saved = () => toast('Saved', 'ok');
+  const body = {
+    general: html`<${UpdatesSettings} /><${Password} s=${s} /><${AboutHub} s=${s} />`,
+    youtube: html`<${YouTubeSettings} />`,
+    recordings: html`<${RecordingsFolder} s=${s} saved=${saved} /><${OldRecordings} saved=${saved} />
+      <${TranscriptionSettings} options=${s.transcription} saved=${saved} />`,
+    brands: html`<${BrandsSettings} />`,
+    ai: html`<${AssistantSettings} changed=${() => dispatchEvent(new Event('ts-auth'))} /><${ApiAccess} />`,
+    network: html`<${Network} s=${s} />`,
+  }[key];
+  return html`<div>
+    <div class="page-head"><div><h1>Settings</h1></div></div>
+    <div class="settings">
+      <nav class="settings-nav" aria-label="Settings">${SECTIONS.map(([k, label, about]) => html`<a href=${`#/settings/${k}`}
+        class=${k === key ? 'active' : ''} aria-current=${k === key ? 'page' : null}><b>${label}</b><span>${about}</span></a>`)}</nav>
+      <div class="settings-body" key=${key}>${body}</div>
+    </div>
   </div>`;
 }

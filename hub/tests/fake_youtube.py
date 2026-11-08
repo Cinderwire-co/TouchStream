@@ -73,6 +73,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send({'access_token': f'at{next(ids)}', 'refresh_token': 'rt-test',
                                    'expires_in': 3600})
             return self._send({'access_token': f'at{next(ids)}', 'expires_in': 3600})
+        if p == '/revoke':
+            return self._send({})
         if not self.headers.get('Authorization', '').startswith('Bearer at'):
             return self._send({'error': {'message': 'Invalid credentials'}}, 401)
         if p == '/youtube/v3/channels':

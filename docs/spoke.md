@@ -1,81 +1,105 @@
 # Spokes
 
-A spoke sits next to your camera or video switcher. It takes the HDMI output, shows the picture on its touchscreen,
-and sends the video to the hub. It also records its own copy while you're live.
+A spoke sits next to your camera or video switcher. It takes the HDMI output, sends the video to the hub, and records
+its own copy while you're live. It's an off-the-shelf box, the **Luckfox PicoKVM**: nothing to build, nothing to
+solder.
+
+> **In development.** The spoke's software works end to end in an emulator: the hub link, streaming, recording and
+> uploading, the screen, and recordings to phones. The parts that need the real box are being finished now: HDMI
+> capture with its hardware encoder, HDMI sound, and the screen on the panel itself. To try it before then, see
+> [spoke/README.md](../spoke/README.md).
+
+<p align="center"><img src="images/spoke-screen.png" width="100%" alt="The spoke's screen: ready, live, its recordings, and a recording's QR code"></p>
 
 ## What you need
 
-- **Raspberry Pi 4 Model B** (2 GB or more), its official USB-C power supply, and a case with a fan
-- **HDMI-to-CSI capture board** built on the Toshiba TC358743 chip (for example Geekworm C779 or Auvidea B101), on the
-  Pi's camera connector
-- **3.5" SPI touchscreen**, MHS35 type (480 × 320, ILI9486 with XPT2046 touch), on the Pi's GPIO header
-- **microSD card**, 64 GB or more: the spoke's own recordings live on it
-- An Ethernet cable if you can. Wi-Fi works, but a wired connection is steadier for live video.
+- **Luckfox PicoKVM**, the version with the 1.54" touchscreen (sold by Waveshare and others)
+- A **microSD card**, 32 GB or more: the spoke's own recordings live on it
+- A **USB-C power supply** (5 V, 2 A) and an **Ethernet cable**. The box has no Wi-Fi: see [Wi-Fi](#wi-fi).
 
-A full parts list with links is coming before the first release.
-
-The source should send **1080p** at 24, 25, 30 (29.97 is fine) or 50 frames per second. 1080p60 is too fast for the
-Pi 4's capture link.
+The source should send **1080p** at 24, 25, 30 (29.97 is fine), 50 or 60 frames per second. Set the rate in the
+spoke's settings in the dashboard; the spoke asks its HDMI source for it.
 
 ## Install
 
-1. With [Raspberry Pi Imager](https://www.raspberrypi.com/software/), write **Raspberry Pi OS Lite (64-bit)** to the
-   card. In its settings:
-   - give the spoke a name, such as `main-hall`;
-   - set a username and password;
-   - add your Wi-Fi (unless you're using Ethernet);
-   - turn on SSH.
-2. Fit the capture board and the screen, put the card in, and power it on.
-3. From another computer, connect to it (`ssh yourname@main-hall.local`) and run:
+The TouchStream installer, for Mac and Windows, sets up the hub and then, for each spoke, writes the spoke's software
+to a microSD card, already paired with your hub. Put the card in the box, plug in HDMI, Ethernet and power, and it
+shows up in the dashboard.
 
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/Cinderwire-co/TouchStream/main/spoke/install.sh | sudo bash
-   ```
+You need a microSD card of 32 GB or more for each spoke (a "high endurance" card lasts longest), and a card reader if
+the computer has no SD slot. The installer only offers removable cards, never the computer's own disks, and shows
+what's on a card before it's erased. Writing a card asks for your password (on a Mac) or permission (on Windows).
+Afterwards Windows may offer to format the card: choose **Cancel**, as it's written, Windows just can't read it.
 
-   It takes about 10 minutes, then the spoke restarts into TouchStream: the boot screen, then the picture from HDMI.
+Already have a hub? The installer can skip it and just make spoke cards. A spoke whose card wasn't paired (or one you
+move to another hub) shows up under **Add spoke** in the dashboard, to adopt with one click.
 
-4. **Pair it with your hub.**
-   - If the spoke and the hub are on the same network: in the dashboard, choose **Add spoke** and **Adopt** it.
-   - Otherwise: **Add spoke** shows a code. On the spoke's screen, tap anywhere, then **Hub**, and enter the hub's
-     address and the code. The address is under the network icon at the top of the dashboard.
+## The screen
 
-## The touchscreen
+The home screen shows the spoke's name and whether it can reach the hub (the dot), what it's doing (**Set up**,
+**Ready**, **No signal**, **Preview**, **Live** or **Recording**), what's coming in over HDMI, and the stream.
 
-The screen shows the live picture with the audio levels, whether the spoke is live, its network, temperature and
-CPU. With no HDMI signal it shows a "Waiting for source" screen. While you're live, viewers see that screen too, so
-they never get a frozen picture.
+Along the bottom:
 
-Tap anywhere for the menu:
+- **Recordings**: the recordings on the card, newest first. Drag to scroll, and tap one for its QR code.
+- **Go live** (the round button with the broadcast sign) starts a broadcast right away, as **Go live** in the dashboard
+  does, and **End** finishes it. End takes two taps, so a stray touch can't stop a broadcast. It needs an HDMI signal.
+  Live, the spoke always records its own copy too.
+- **Record** (the red button) records on the spoke, with or without a hub, without streaming. Stopping takes two taps
+  too.
 
-- **Wi-Fi**: pick a network and type its password.
-- **Hub**: the hub it's paired with, or pair it with one.
-- **Recordings**: what's on the card. Tap one for a QR code: scan it with a phone on the same network to download it.
-  The spoke first makes a phone-friendly copy, which takes about a minute per hour of video.
-- **Test pattern**: colour bars with a running clock, to test the stream without a source.
-- **Reboot**.
+Whenever it's waiting on something, the line under the input says what: **Connecting to the hub…**, **Connecting to
+YouTube…**, or **Can't reach the hub · retrying**.
 
-## Its own recordings
+## Without a hub
 
-With **Keep a copy on the spoke** on (in the spoke's settings in the dashboard), the spoke records while it's live. It
-uploads each part to the hub as it goes, so little is left to send at the end. If the internet drops, the spoke's copy
-has everything, and it catches up once the connection is back.
+A spoke works on its own too. Tap the top of its screen for **setup**: a QR code for a page on your phone where you
+add YouTube stream keys (from YouTube Studio: **Create** › **Go live** › **Stream**), pick the resolution, frame rate
+and quality, name it, or connect it to a hub. **Go live** then streams straight to YouTube, and records a copy on the
+card. Setup is only there without a hub: with one, its settings are in the dashboard.
 
-When the card fills, the spoke deletes its oldest recordings: ones the hub already has first, and never the one being
-recorded. The Home page shows each spoke's free space and any recordings the hub doesn't have yet.
+A spoke with a hub keeps a copy of its schedule (the next week of broadcasts, and each one's stream keys), so it can
+run on its own. If the hub can't be reached when a broadcast is due, or in the middle of one, the spoke streams it
+straight to YouTube; if it can't stream at all, it still records it. It stops at the broadcast's end time, and the hub
+takes over again when it's back.
 
-## When the hub is down
+## Recordings on a phone
 
-Every spoke keeps a week of its own schedule. If it can't reach the hub at a broadcast's start time, it goes live
-straight to YouTube by itself, and records as usual. When the hub is back, it takes over again and collects the
-recording.
+Tap a recording, and scan its QR code with a phone on the same network. The spoke serves the page itself, so it needs
+no internet: watch the recording, pick a start and an end, and download the clip or the whole thing. The first time,
+the spoke makes a phone-friendly copy: about a minute per hour of video. A clip is copied at full quality, without
+re-encoding, so it can only begin on a keyframe (one every 2 seconds): the start snaps to the nearest one, and the
+clip begins exactly where it shows. For a frame-exact cut, use the editor in the hub.
 
-## Settings and updates
+A link keeps working for 30 minutes after it was last used. After that, show the QR code again.
 
-In the dashboard, open a spoke, then **Settings**:
-- name and location;
-- frame rate and quality;
-- whether it keeps its own copy;
-- **Restart**, and **Update software**, which fetches the latest TouchStream and restarts.
+## Sound
 
-To change several spokes at once, use **Settings for all** on the Spokes page. You can also update a spoke by running
-the install command on it again.
+The spoke takes the sound that comes over HDMI with the picture. If the source sends its sound elsewhere (or sends
+none), the stream carries silence and the picture is unaffected.
+
+## Wi-Fi
+
+The PicoKVM has only Ethernet. For a room without a network jack, use a pocket travel router as its Wi-Fi: the
+router joins the venue's Wi-Fi, and the box plugs into the router's Ethernet port. One USB cable from the router for
+both power and network is coming.
+
+## When the internet drops
+
+The spoke keeps recording its own copy, and uploads it when the hub is back. Each part uploads as soon as it's
+finished, so little is left to send at the end. The spoke looks after its card: it keeps 2 GB free by deleting the
+oldest recordings as new ones need the room, the ones the hub already has first. The one being recorded is never
+touched. At the default quality (8 Mbps), 48 GB holds about 12½ hours.
+
+## Updates
+
+A spoke runs the same version as its hub, and the hub brings it up to date: once the hub has a new version, it
+gives each spoke the matching one as soon as that spoke is idle (not live or recording, and nothing of its due
+within the hour). Its screen says **Updating** while it does, for a few seconds. With automatic updates off
+(Settings > General on the hub), each spoke waits for **Update** there.
+
+- Each update is signed with TouchStream's release key; a spoke installs nothing else.
+- It keeps the version before. A new one that can't reach the hub after three starts is put back, and the hub
+  shows that it didn't take; **Try again** there tries it again.
+- The box's own system (Linux, its drivers) doesn't change with updates: the spoke itself does.
+

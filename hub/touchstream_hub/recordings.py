@@ -105,13 +105,16 @@ def spoke_copies(spoke_id):
 
 
 def match(events, copies, now=None):
-    """Assign each copy to the broadcast it overlaps most: ({event id: [copies]}, [unmatched])."""
+    """Assign each copy to the broadcast it overlaps most: ({event id: [copies]}, [unmatched]).
+    One that overlaps none still joins a broadcast it sits wholly within MATCH_SLACK of (clocks a little
+    apart, a spoke that started early); one that only brushes past, like a recording made on the
+    touchscreen just before going live, stays on its own."""
     now = now or time.time()
     windows = []
     for e in events:
         start = e.get('started_at') or e['start_at']
         end = e.get('ended_at') or (now if e['state'] == 'live' else e.get('end_at') or start + 4 * 3600)
-        windows.append((e['id'], start - MATCH_SLACK, end + MATCH_SLACK))
+        windows.append((e['id'], start, end))
     grouped, unmatched = {}, []
     for c in copies:
         best, best_overlap = None, 0
@@ -119,6 +122,9 @@ def match(events, copies, now=None):
             overlap = min(end, c['end']) - max(start, c['start'])
             if overlap > best_overlap or (overlap >= 0 and best is None and c['start'] == c['end']):
                 best, best_overlap = event_id, overlap
+        if best is None:
+            best = next((event_id for event_id, start, end in windows
+                         if start - MATCH_SLACK <= c['start'] and c['end'] <= end + MATCH_SLACK), None)
         if best is None:
             unmatched.append(c)
         else:

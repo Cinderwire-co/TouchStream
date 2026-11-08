@@ -83,17 +83,57 @@ CREATE TABLE IF NOT EXISTS transcripts (
     progress REAL NOT NULL DEFAULT 0,
     model TEXT,
     language TEXT,
-    segments TEXT,                              -- JSON [{start, end, text}]
+    segments TEXT,                              -- JSON [{start, end, text, words: [[start, end, word]]}]
     edited INTEGER NOT NULL DEFAULT 0,
     error TEXT,
     created_at REAL NOT NULL,
     updated_at REAL
 );
--- Files in the recordings folder: a broadcast's filed recordings and edits
+-- A vertical short of one moment of a broadcast (shorts.py)
+CREATE TABLE IF NOT EXISTS shorts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    spec TEXT NOT NULL,                         -- {source, start, end, framing, style, accent, trim_pauses}
+    status TEXT NOT NULL DEFAULT 'queued',      -- queued | analyzing | rendering | done | failed | publishing
+    progress REAL NOT NULL DEFAULT 0,
+    duration REAL,
+    output TEXT,
+    error TEXT,
+    published TEXT,                             -- JSON list of YouTube uploads
+    created_at REAL NOT NULL
+);
+-- Videos, images and sound uploaded to the hub for edits: intros, slides, logos, music (media.py)
+CREATE TABLE IF NOT EXISTS media (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,                         -- video | image | audio
+    file TEXT NOT NULL,                         -- name in <data>/media
+    duration REAL,
+    width INTEGER,
+    height INTEGER,
+    has_audio INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL
+);
+-- A look for a channel: intro, outro and watermark (media.py)
+CREATE TABLE IF NOT EXISTS brands (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    intro INTEGER REFERENCES media(id) ON DELETE SET NULL,
+    outro INTEGER REFERENCES media(id) ON DELETE SET NULL,
+    intro_seconds INTEGER NOT NULL DEFAULT 5,   -- how long an image intro or outro shows
+    outro_seconds INTEGER NOT NULL DEFAULT 5,
+    watermark INTEGER REFERENCES media(id) ON DELETE SET NULL,
+    watermark_corner TEXT NOT NULL DEFAULT 'bottom_right',
+    watermark_size INTEGER NOT NULL DEFAULT 12, -- % of the video's width
+    watermark_opacity INTEGER NOT NULL DEFAULT 80,
+    created_at REAL NOT NULL
+);
+-- Files in the recordings folder: a broadcast's filed recordings, edits and shorts
 CREATE TABLE IF NOT EXISTS library (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL,                         -- hub | spoke | edit
+    kind TEXT NOT NULL,                         -- hub | spoke | edit | short
     number INTEGER NOT NULL DEFAULT 1,          -- the 2nd spoke recording, edit 3...
     path TEXT NOT NULL,                         -- absolute
     start REAL,
@@ -132,6 +172,18 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     created_at REAL NOT NULL,
     last_used_at REAL
 );
+-- Agents asking for an API token, for the dashboard to approve (auth.AccessRequests)
+CREATE TABLE IF NOT EXISTS access_requests (
+    id TEXT PRIMARY KEY,                        -- long and random: the agent's proof it asked
+    name TEXT NOT NULL,
+    scope TEXT NOT NULL,                        -- asked for, then what was approved
+    code TEXT NOT NULL,                         -- shown by the agent and the dashboard, to match
+    ip TEXT,
+    status TEXT NOT NULL,                       -- pending | approved | collected | denied | expired
+    token_id INTEGER,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS event_targets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
@@ -156,10 +208,13 @@ MIGRATIONS = [
     ('events', 'adhoc', 'INTEGER NOT NULL DEFAULT 0'),
     # 1080p frame rate the spoke asks its HDMI source for: 24 | 25 | 30 | 50
     ('spokes', 'framerate', "TEXT NOT NULL DEFAULT '30'"),
+    ('spokes', 'removed_at', 'REAL'),   # removed from the hub: its broadcasts and recordings stay
     # The broadcast's folder in the recordings folder, once something is filed there
     ('events', 'folder', 'TEXT'),
     # Where the spoke's last heartbeat came from, to tell it the hub's new address if that changes
     ('spokes', 'last_ip', 'TEXT'),
+    # The spoke's time zone (an IANA name); '' for where it finds itself to be, on the internet
+    ('spokes', 'time_zone', "TEXT NOT NULL DEFAULT ''"),
     # Recurring broadcasts: the series a broadcast belongs to, its date in it, and whether it
     # was changed on its own (then changes to the series leave it alone)
     ('events', 'series_id', 'INTEGER REFERENCES series(id) ON DELETE SET NULL'),
@@ -169,6 +224,10 @@ MIGRATIONS = [
     ('events', 'edit_draft', 'TEXT'),
     # When old-recordings cleanup (retention.py) deleted its recordings
     ('events', 'recordings_removed_at', 'REAL'),
+    # Moments the assistant's model suggested for shorts: {moments: [{start, end, title, why}], model, made_at}
+    ('transcripts', 'suggestions', 'TEXT'),
+    # The brand the editor picks for this channel's broadcasts
+    ('youtube_channels', 'brand_id', 'INTEGER REFERENCES brands(id) ON DELETE SET NULL'),
 ]
 
 
@@ -209,8 +268,10 @@ class Database:
     def spoke(self, spoke_id):
         return _decode(self.one('SELECT * FROM spokes WHERE id = ?', spoke_id))
 
-    def spokes(self):
-        return [_decode(s) for s in self.all('SELECT * FROM spokes ORDER BY created_at')]
+    def spokes(self, removed=False):
+        """The hub's spokes; with removed=True, also ones removed from it (whose broadcasts and recordings stay)."""
+        return [_decode(s) for s in self.all('SELECT * FROM spokes WHERE ? OR removed_at IS NULL ORDER BY created_at',
+                                             int(removed))]
 
     def destinations(self, spoke_id=None):
         if spoke_id:

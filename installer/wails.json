@@ -1,0 +1,16 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "TouchStream Installer",
+  "outputfilename": "TouchStream Installer",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dir": "frontend",
+  "wailsjsdir": "",
+  "info": {
+    "companyName": "Cinderwire",
+    "productName": "TouchStream Installer",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright (c) 2025 Will Reeves and TouchStream Contributors",
+    "comments": "Installs the TouchStream hub and writes spoke cards"
+  }
+}

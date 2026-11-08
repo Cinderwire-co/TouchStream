@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Builds touchstream-capture for the PicoKVM into spoke/build/, with Luckfox's SDK toolchain and
+# Rockchip's MPI (headers and librockit). The rest of what librockit needs is on the box, in
+# /oem/usr/lib. Fetches the parts of the SDK it uses into .dev/luckfox-sdk the first time (about
+# 250 MB), or uses LUCKFOX_SDK. The toolchain is for x86-64 Linux, so it runs in Docker.
+#
+# Copyright (c) 2025 Will Reeves and TouchStream Contributors
+# Licensed under the MIT License - see LICENSE file for details
+
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SPOKE="$(dirname "$HERE")"
+SDK="${LUCKFOX_SDK:-$(dirname "$SPOKE")/.dev/luckfox-sdk}"
+TOOLCHAIN=tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf
+MPI=media/rockit/rockit/mpi/sdk/include
+LIBS=media/rockit/rockit/lib/lib32
+
+if [ ! -x "$SDK/$TOOLCHAIN/bin/arm-rockchip830-linux-uclibcgnueabihf-gcc" ]; then
+    echo "Fetching the parts of Luckfox's SDK the helper needs, into $SDK"
+    git clone -q --filter=blob:none --no-checkout --depth 1 https://github.com/LuckfoxTECH/luckfox-pico.git "$SDK"
+    git -C "$SDK" sparse-checkout init --cone
+    git -C "$SDK" sparse-checkout set "$MPI" "$LIBS" "$TOOLCHAIN"
+    git -C "$SDK" checkout -q
+fi
+
+mkdir -p "$SPOKE/build"
+docker run --rm --platform linux/amd64 -v "$SDK:/sdk:ro" -v "$SPOKE:/spoke" debian:bookworm-slim \
+    "/sdk/$TOOLCHAIN/bin/arm-rockchip830-linux-uclibcgnueabihf-gcc" -std=gnu11 -O2 -Wall -Wextra \
+    -I"/sdk/$MPI" -o /spoke/build/touchstream-capture /spoke/capture/touchstream-capture.c \
+    -L"/sdk/$LIBS" -lrockit -lpthread -Wl,--allow-shlib-undefined -Wl,-rpath,/oem/usr/lib
+echo "Built build/touchstream-capture ($(du -h "$SPOKE/build/touchstream-capture" | cut -f1))"

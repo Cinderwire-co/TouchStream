@@ -8,7 +8,7 @@ import { Select } from './fields.js';
 const DONE = { hub_overview: 'Looked at the hub', list_broadcasts: 'Looked at the schedule', get_broadcast: 'Looked at a broadcast',
   get_transcript: 'Read the transcript', schedule_broadcast: 'Scheduled', update_broadcast: 'Changed a broadcast',
   delete_broadcast: 'Deleted', go_live: 'Went live', end_live: 'Ended the broadcast', edit_video: 'Started the edit',
-  publish_video: 'Started publishing' };
+  publish_video: 'Started publishing', make_short: 'Started the short', publish_short: 'Started publishing the short' };
 const IDEAS = ["What's coming up this week?", 'Schedule our Sunday service every week at 10 am', 'How are the spokes doing?'];
 
 /** The floating button and chat panel, on every page while the assistant is on. */
@@ -31,6 +31,8 @@ export function Assistant() {
       setMessages(r.messages);
       setTurns((t) => [...t.map((x) => ({ ...x, pending: null })),
         { who: 'it', text: r.reply, steps: r.steps, pending: r.pending }]);
+      // Pages showing what it changed (the editor, say) pick it up
+      if (r.steps && r.steps.length) dispatchEvent(new CustomEvent('ts-changed', { detail: r.steps.map((x) => x.tool) }));
     } catch (e) {
       setTurns((t) => [...t, { who: 'it', error: e.message }]);
     }
@@ -98,8 +100,10 @@ function KeyForm({ onSaved, onSkip, current }) {
   const needsKey = !(current && current.enabled);
   return html`<form class="form" onSubmit=${save}>
     <div class="form-row">
-      <label class="field"><span>OpenRouter API key${current && current.enabled ? ` (saved ${current.key_hint}; paste a new one to change it)` : ''}</span>
-        <input type="password" autocomplete="off" placeholder="sk-or-…" value=${key} onInput=${(e) => setKey(e.target.value)} /></label>
+      <label class="field"><span>OpenRouter API key</span>
+        <input type="password" autocomplete="off" value=${key} onInput=${(e) => setKey(e.target.value)}
+          placeholder=${needsKey ? 'sk-or-…' : `${'•'.repeat(24)}${current.key_hint.replace('…', '')}`} />
+        ${!needsKey && html`<small class="muted">Saved. Paste a new key here to replace it.</small>`}</label>
       <div class="field"><span>Model</span><${Select} label="Model" value=${model} options=${models} onChange=${setModel} /></div>
     </div>
     ${error && html`<p class="error">${error}</p>`}

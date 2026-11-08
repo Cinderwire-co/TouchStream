@@ -11,6 +11,7 @@
 #   $env:TOUCHSTREAM_UNINSTALL = 1; irm ... | iex   remove the hub (keeps settings and recordings)
 #   $env:TOUCHSTREAM_SOURCE                          install the hub from a folder or URL instead of GitHub
 #   $env:TOUCHSTREAM_PORT                            dashboard port (default: 8080, or the next free one)
+#   $env:TOUCHSTREAM_NO_OPEN                         don't open the dashboard at the end (the installer app sets it)
 #
 # Copyright (c) 2025 Will Reeves and TouchStream Contributors
 # Licensed under the MIT License - see LICENSE file for details
@@ -215,4 +216,6 @@ Write-Host ''
 foreach ($port in $Busy) {
     Write-Host "  Note: another program on this PC is using $($port.Protocol) port $($port.Port), which the hub needs for $($port.For)."
 }
-try { Start-Process "http://localhost:$Port/" } catch { }   # (no desktop when run over SSH)
+if (-not $env:TOUCHSTREAM_NO_OPEN) {   # (the installer app carries on itself)
+    try { Start-Process "http://localhost:$Port/" } catch { }   # (no desktop when run over SSH)
+}

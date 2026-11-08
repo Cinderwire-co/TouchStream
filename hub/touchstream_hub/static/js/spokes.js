@@ -17,8 +17,8 @@ export function HubAddressButton() {
   const copy = () => navigator.clipboard && navigator.clipboard.writeText(address)
     .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
   return html`<span class="select-wrap">
-    <button ref=${anchor} class="icon-btn" aria-label="This hub's address" title="This hub's address" aria-expanded=${open}
-      onClick=${() => setOpen(!open)}><${Icon} name="network" /></button>
+    <button ref=${anchor} class="btn ghost small" aria-label="This hub's address" title="This hub's address, for spokes and phones" aria-expanded=${open}
+      onClick=${() => setOpen(!open)}><${Icon} name="network" size=${15} /><span class="hide-narrow">Hub address</span></button>
     ${open && style && html`<div class="popover hub-pop" ref=${popover} style=${style}>
       <span class="eyebrow">This hub's address</span>
       <div class="copy"><code>${address || '…'}</code>
@@ -121,20 +121,57 @@ function DestinationRow({ dest, live, scheduled, onEdit, refresh }) {
 
 // ---- Settings ----
 export const FRAME_RATES = [['24', '1080p24 · film look'], ['25', '1080p25 · PAL regions'],
-  ['30', '1080p30 · most common'], ['50', '1080p50 · smooth motion']];
+  ['30', '1080p30 · most common'], ['50', '1080p50 · smooth motion'], ['60', '1080p60 · smoothest motion']];
+
+/** The frame rates this spoke can capture (it says in its heartbeat); all of them until it has. */
+const ratesFor = (spoke) => {
+  const own = spoke.status && spoke.status.framerates;
+  return Array.isArray(own) && own.length ? FRAME_RATES.filter(([r]) => own.includes(r)) : FRAME_RATES;
+};
+// More motion needs more bits: 50 and 60 fps get a higher bitrate unless one is already set
+const bitsFor = (rate, kbps) => (Number(rate) >= 50 && kbps < 10000 ? 12000 : kbps);
 
 /** The source's actual rate differs from the setting (29.97 counts as 30). */
+/** The stream isn't at the spoke's frame rate: the source sends one it can't be made from (a spoke streams every
+ *  2nd frame of a source sending twice its rate). */
 function rateMismatch(spoke) {
-  const fps = spoke.status && spoke.status.signal_fps;
+  const st = spoke.status || {};
+  const fps = st.stream_fps || st.signal_fps;
   return spoke.online && fps && Math.abs(fps - Number(spoke.framerate)) > 0.1 && !(spoke.framerate === '30' && Math.abs(fps - 29.97) < 0.05);
+}
+
+/** Common time zones, for a spoke that's somewhere its internet connection doesn't say (behind a VPN, say). */
+const TIME_ZONES = [
+  ['America/New_York', 'Eastern (New York)'], ['America/Chicago', 'Central (Chicago)'], ['America/Denver', 'Mountain (Denver)'],
+  ['America/Phoenix', 'Arizona (Phoenix)'], ['America/Los_Angeles', 'Pacific (Los Angeles)'], ['America/Anchorage', 'Alaska'],
+  ['Pacific/Honolulu', 'Hawaii'], ['America/Puerto_Rico', 'Puerto Rico'], ['America/Halifax', 'Atlantic (Halifax)'],
+  ['America/St_Johns', 'Newfoundland'], ['America/Toronto', 'Toronto'], ['America/Vancouver', 'Vancouver'],
+  ['America/Mexico_City', 'Mexico City'], ['America/Bogota', 'Bogotá'], ['America/Lima', 'Lima'], ['America/Sao_Paulo', 'São Paulo'],
+  ['America/Argentina/Buenos_Aires', 'Buenos Aires'], ['America/Santiago', 'Santiago'], ['Europe/London', 'London'],
+  ['Europe/Dublin', 'Dublin'], ['Europe/Lisbon', 'Lisbon'], ['Europe/Paris', 'Paris'], ['Europe/Berlin', 'Berlin'], ['Europe/Madrid', 'Madrid'],
+  ['Europe/Rome', 'Rome'], ['Europe/Amsterdam', 'Amsterdam'], ['Europe/Stockholm', 'Stockholm'], ['Europe/Warsaw', 'Warsaw'],
+  ['Europe/Athens', 'Athens'], ['Europe/Kyiv', 'Kyiv'], ['Europe/Istanbul', 'Istanbul'], ['Europe/Moscow', 'Moscow'],
+  ['Africa/Lagos', 'Lagos'], ['Africa/Cairo', 'Cairo'], ['Africa/Nairobi', 'Nairobi'], ['Africa/Johannesburg', 'Johannesburg'],
+  ['Asia/Dubai', 'Dubai'], ['Asia/Karachi', 'Karachi'], ['Asia/Kolkata', 'India'], ['Asia/Dhaka', 'Dhaka'], ['Asia/Bangkok', 'Bangkok'],
+  ['Asia/Jakarta', 'Jakarta'], ['Asia/Singapore', 'Singapore'], ['Asia/Manila', 'Manila'], ['Asia/Hong_Kong', 'Hong Kong'],
+  ['Asia/Shanghai', 'China'], ['Asia/Seoul', 'Seoul'], ['Asia/Tokyo', 'Tokyo'], ['Australia/Perth', 'Perth'],
+  ['Australia/Adelaide', 'Adelaide'], ['Australia/Brisbane', 'Brisbane'], ['Australia/Sydney', 'Sydney'], ['Pacific/Auckland', 'Auckland'],
+];
+
+/** Automatic first (where the spoke found itself to be), then the common ones, and the one it's set to if it's another. */
+function zonesFor(spoke, chosen) {
+  const found = spoke.status && spoke.status.time_zone_found;
+  const label = (z) => (TIME_ZONES.find((t) => t[0] === z) || [z, z.replace(/_/g, ' ')])[1];
+  const auto = found ? ['', `Automatic: ${label(found)}`, 'Where its internet connection is']
+    : ['', 'Automatic', 'It looks up where it is once it\'s online'];
+  const own = chosen && !TIME_ZONES.some((t) => t[0] === chosen) ? [[chosen, label(chosen)]] : [];
+  return [auto, ...own, ...TIME_ZONES];
 }
 
 function SpokeSettingsModal({ spoke, onClose }) {
   const [form, setForm] = useState({ name: spoke.name, location: spoke.location, bitrate_kbps: spoke.bitrate_kbps,
-    record_local: spoke.record_local, framerate: spoke.framerate });
-  // 50 fps carries more motion: give it a higher bitrate unless one is already set
-  const setRate = (rate) => setForm({ ...form, framerate: rate,
-    bitrate_kbps: rate === '50' && form.bitrate_kbps < 10000 ? 12000 : form.bitrate_kbps });
+    record_local: spoke.record_local, framerate: spoke.framerate, time_zone: spoke.time_zone || '' });
+  const setRate = (rate) => setForm({ ...form, framerate: rate, bitrate_kbps: bitsFor(rate, form.bitrate_kbps) });
   const [error, setError] = useState('');
   const [sent, setSent] = useState('');
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -143,10 +180,12 @@ function SpokeSettingsModal({ spoke, onClose }) {
     try { await api('PATCH', `/api/spokes/${spoke.id}`, { ...form, bitrate_kbps: Number(form.bitrate_kbps) }); onClose(); }
     catch (err) { setError(err.message); }
   };
-  const command = async (c) => { await api('POST', `/api/spokes/${spoke.id}/command`, { command: c }); setSent(c === 'update' ? 'Update sent' : 'Restart sent'); };
+  const command = async (c) => { await api('POST', `/api/spokes/${spoke.id}/command`, { command: c }); setSent('Restart sent'); };
+  const update = async () => { await api('POST', `/api/spokes/${spoke.id}/update`); setSent(`Update to ${spoke.update.hub_version} asked for: it starts once the spoke is idle`); };
+  const behind = spoke.update && ['available', 'failed'].includes(spoke.update.state);
   const forget = async () => {
-    if (!(await confirmAction({ title: `Remove ${spoke.name}?`, message: 'It stops being part of this hub. Its recordings stay here.',
-      confirm: 'Remove spoke', danger: true }))) return;
+    if (!(await confirmAction({ title: `Remove ${spoke.name}?`, confirm: 'Remove spoke', danger: true,
+      message: 'The hub forgets this device. Its broadcasts, recordings, edits and shorts all stay here. Upcoming broadcasts stay on the schedule until you move them to another spoke.' }))) return;
     await api('DELETE', `/api/spokes/${spoke.id}`); location.hash = '#/spokes'; onClose();
   };
   return html`<${Modal} title="Spoke settings" onClose=${onClose}>
@@ -156,29 +195,31 @@ function SpokeSettingsModal({ spoke, onClose }) {
         <label class="field"><span>Location</span><input type="text" placeholder="Main sanctuary" value=${form.location} onInput=${set('location')} /></label>
       </div>
       <div class="form-row">
+        <div class="field"><span>Time zone</span>
+          <${Select} label="Time zone" value=${form.time_zone} options=${zonesFor(spoke, form.time_zone)}
+            onChange=${(v) => setForm({ ...form, time_zone: v })} /></div>
+      </div>
+      <div class="form-row">
         <div class="field"><span>Frame rate</span>
-          <${Select} label="Frame rate" value=${form.framerate} options=${FRAME_RATES} onChange=${setRate} /></div>
+          <${Select} label="Frame rate" value=${form.framerate} options=${ratesFor(spoke)} onChange=${setRate} /></div>
         <div class="field"><span>Quality (H.264 High)</span>
           <${Select} label="Quality" value=${form.bitrate_kbps} onChange=${(v) => setForm({ ...form, bitrate_kbps: v })}
             options=${QUALITY.map((q) => [q.kbps, `${q.label} · ${q.kbps / 1000} Mbps`, q.note])} /></div>
       </div>
       <p class="muted small" style="margin-top:-6px">The spoke asks its HDMI source for this rate. Most cameras follow
-        automatically; if yours doesn't, set its HDMI output to match (29.97 is fine for 30). 1080p60 is too fast for a Pi 4's capture link.</p>
-      <div class="check-row">
-        <div><b>Keep a copy on the spoke</b>
-          <div class="muted small">Records on the device while live and uploads it here. Nothing is lost if the internet drops.</div></div>
-        <${Switch} checked=${form.record_local} onChange=${(v) => setForm({ ...form, record_local: v })} label="Keep a copy on the spoke" />
-      </div>
+        automatically; if yours doesn't, set its HDMI output to match (29.97 is fine for 30). The list shows what this spoke
+        can capture. Live, a spoke always keeps its own copy too, and uploads it here: nothing is lost if the internet
+        drops.</p>
       ${error && html`<p class="error">${error}</p>`}
       <div class="modal-foot split">
         <span class="foot-group">
           <button type="button" class="btn ghost small" onClick=${() => command('reboot')}>Restart</button>
-          <button type="button" class="btn ghost small" title="Get the latest TouchStream software and restart" onClick=${() => command('update')}>Update software</button>
+          ${behind && html`<button type="button" class="btn ghost small" title="Bring it up to the hub's version" onClick=${update}>Update to ${spoke.update.hub_version}</button>`}
           <button type="button" class="btn danger small" onClick=${forget}>Remove</button>
         </span>
         <button class="btn primary">Save</button>
       </div>
-      ${sent && html`<p class="muted small">${sent}; the spoke picks it up within a few seconds.</p>`}
+      ${sent && html`<p class="muted small">${sent}${sent === 'Restart sent' ? '; the spoke picks it up within a few seconds' : ''}.</p>`}
     </form>
   </${Modal}>`;
 }
@@ -199,19 +240,15 @@ export function AllSpokesModal({ onClose }) {
   return html`<${Modal} title="Settings for all spokes" onClose=${onClose}>
     <form class="form" onSubmit=${save}>
       <p class="muted small">Saving sets these on all ${d.spokes} spoke${d.spokes === 1 ? '' : 's'}, and on spokes you add
-        later. You can still change one spoke on its own in its settings.</p>
+        later (a spoke that can't capture the frame rate keeps its own). You can still change one spoke on its own in its
+        settings.</p>
       <div class="form-row">
         <div class="field"><span>Frame rate${own('framerate')}</span>
           <${Select} label="Frame rate" value=${form.framerate} options=${FRAME_RATES} onChange=${(v) => setForm({ ...form, framerate: v,
-            bitrate_kbps: v === '50' && form.bitrate_kbps < 10000 ? 12000 : form.bitrate_kbps })} /></div>
+            bitrate_kbps: bitsFor(v, form.bitrate_kbps) })} /></div>
         <div class="field"><span>Quality${own('bitrate_kbps')}</span>
           <${Select} label="Quality" value=${form.bitrate_kbps} onChange=${(v) => setForm({ ...form, bitrate_kbps: v })}
             options=${QUALITY.map((q) => [q.kbps, `${q.label} · ${q.kbps / 1000} Mbps`, q.note])} /></div>
-      </div>
-      <div class="check-row">
-        <div><b>Keep a copy on each spoke</b>
-          <div class="muted small">Records on the device while live and uploads it here${own('record_local')}.</div></div>
-        <${Switch} checked=${form.record_local} onChange=${(v) => setForm({ ...form, record_local: v })} label="Keep a copy on each spoke" />
       </div>
       ${error && html`<p class="error">${error}</p>`}
       <div class="modal-foot"><button type="button" class="btn ghost" onClick=${onClose}>Cancel</button>
@@ -320,7 +357,12 @@ export function SpokePage({ id }) {
     ['Storage', st.storage ? `${bytes(st.storage.free)} free of ${bytes(st.storage.total)} · ${st.storage.recordings} recording${
       st.storage.recordings === 1 ? '' : 's'}` : '—'],
     ['Internet', st.speed && st.speed.at ? `↓ ${Math.round(st.speed.down_mbps)} ↑ ${Math.round(st.speed.up_mbps)} Mbps · ${ago(st.speed.at)}` : '—'],
-    ['Version', st.version || '—'],
+    ['Version', html`${st.version || '—'}${{
+      available: html` · <a href="#/settings/general">${(spoke.update || {}).hub_version} is ready</a>`,
+      updating: ` · updating to ${(spoke.update || {}).hub_version}…`,
+      restarting: ' · restarting…',
+      failed: html` · <a class="warn-text" href="#/settings/general">${(spoke.update || {}).hub_version} didn’t start</a>`,
+    }[(spoke.update || {}).state] || ''}`],
   ];
   return html`<div>
     <a class="crumb" href="#/spokes"><${Icon} name="back" size=${15} /> Spokes</a>

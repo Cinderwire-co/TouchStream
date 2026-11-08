@@ -2,7 +2,7 @@
 import unittest
 from types import SimpleNamespace
 
-from touchstream_hub.editor import keep_ranges
+from touchstream_hub.editor import keep_ranges, normalize, placements
 from touchstream_hub.recordings import match
 from touchstream_hub.transcribe import captions_from_words, remap, to_srt
 
@@ -16,6 +16,18 @@ class EditRanges(unittest.TestCase):
 
     def test_cut_outside_trim_is_ignored(self):
         self.assertEqual(keep_ranges({'in': 10, 'out': 50, 'cuts': [[0, 5], [55, 60]]}, 60), [(10, 50)])
+
+    def test_edits_as_tracks(self):
+        edit = normalize({'in': 0, 'cuts': [[10, 20]], 'dip': 0.5}, 60)           # an edit from before tracks
+        self.assertEqual([(c['at'], c['start'], c['end']) for c in edit['video']], [(0, 0, 10), (10, 20, 60)])
+        self.assertEqual(len(edit['audio']), 2)                                     # linked sound
+        self.assertEqual(edit['video'][0]['transition'], {'type': 'dip_black', 'duration': 1.0})
+        edit = normalize({'video': [{'at': 0, 'start': 0, 'end': 4, 'transition': {'type': 'dissolve', 'duration': 2}},
+                                    {'at': 4, 'start': 6, 'end': 7}, {'at': 10, 'start': 20, 'end': 30}],
+                          'audio': [{'at': 0, 'start': 0, 'end': 5}]}, 60)
+        self.assertEqual(edit['video'][0]['transition'], {'type': 'dissolve', 'duration': 1.0})   # no longer than a side
+        self.assertEqual(edit['total'], 20)                                         # the gap from 5 to 10 stays
+        self.assertEqual(placements(edit), [(0, 5, 0)])                             # what's said, for captions
 
 
 class Captions(unittest.TestCase):
@@ -47,6 +59,15 @@ class RecordingMatch(unittest.TestCase):
         self.assertEqual(len(grouped[1]), 2)
         self.assertNotIn(2, grouped)
         self.assertEqual(len(unmatched), 1)
+
+    def test_a_recording_just_before_a_broadcast_stays_on_its_own(self):
+        # Recorded on the touchscreen, stopped, then live a minute later
+        events = [{'id': 1, 'start_at': 1000, 'started_at': 1000, 'ended_at': 1070, 'state': 'ended'}]
+        copies = [{'start': 847, 'end': 938, 'source': 'spoke'}, {'start': 1002, 'end': 1071, 'source': 'spoke'},
+                  {'start': 1072, 'end': 1080, 'source': 'hub'}]   # the last few seconds, after the end
+        grouped, unmatched = match(events, copies, now=6000)
+        self.assertEqual([c['start'] for c in grouped[1]], [1002, 1072])
+        self.assertEqual([c['start'] for c in unmatched], [847])
 
 
 if __name__ == '__main__':

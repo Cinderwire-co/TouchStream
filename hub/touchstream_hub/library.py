@@ -5,6 +5,7 @@
             Sunday Service - hub recording.mp4      title, description, date and thumbnail inside
             Sunday Service - spoke recording.mp4
             Sunday Service - edited.mp4
+            Sunday Service - short.mp4              vertical, for YouTube Shorts and reels
             Sunday Service - thumbnail.jpg
             Sunday Service.srt                      captions, and the same as plain text
             Sunday Service - transcript.txt
@@ -34,9 +35,9 @@ from .transcribe import to_srt, to_txt
 
 FILE_EVERY = 30     # seconds between looks for copies ready to file
 SETTLE = 60         # seconds after a broadcast ends before its copies are filed
-KINDS = {'hub': 'hub recording', 'spoke': 'spoke recording', 'edit': 'edited'}
+KINDS = {'hub': 'hub recording', 'spoke': 'spoke recording', 'edit': 'edited', 'short': 'short'}
 ABOUT = {'hub': 'recorded by the hub as it arrived', 'spoke': 'recorded on the spoke (no network gaps)',
-         'edit': 'edited on the hub'}
+         'edit': 'edited on the hub', 'short': 'a vertical short, made on the hub'}
 WINDOWS_RESERVED = {'CON', 'PRN', 'AUX', 'NUL', *(f'COM{i}' for i in range(1, 10)), *(f'LPT{i}' for i in range(1, 10))}
 
 
@@ -122,11 +123,11 @@ class Library:
         return True
 
     def filed_copies(self, event_ids):
-        """{event id: [copies]} of the recordings filed for these broadcasts (not edits)."""
+        """{event id: [copies]} of the recordings filed for these broadcasts (not edits or shorts)."""
         out = {}
         for i in range(0, len(event_ids), 500):
             ids = event_ids[i:i + 500]
-            rows = self.db.all(f"SELECT * FROM library WHERE kind != 'edit' AND event_id IN ({','.join('?' * len(ids))}) "
+            rows = self.db.all(f"SELECT * FROM library WHERE kind IN ('hub', 'spoke') AND event_id IN ({','.join('?' * len(ids))}) "
                                'ORDER BY kind, number', *ids)
             for row in rows:
                 path = Path(row['path'])
@@ -158,16 +159,17 @@ class Library:
                 print(f"Filing recordings failed: {e}")
 
     def _in_use(self):
-        """Working copies an edit or transcription is about to read or reading now."""
+        """Working copies an edit, short or transcription is about to read or reading now."""
         rows = self.db.all("SELECT source FROM edits WHERE status IN ('queued', 'rendering') UNION "
-                           "SELECT source FROM transcripts WHERE status IN ('queued', 'running')")
+                           "SELECT json_extract(spec, '$.source') FROM shorts WHERE status IN ('queued', 'analyzing', 'rendering') "
+                           "UNION SELECT source FROM transcripts WHERE status IN ('queued', 'running')")
         return {r['source'] for r in rows}
 
     def file_ready(self, now=None):
         """File every complete copy of every broadcast that ended a minute or more ago."""
         now = now or time.time()
         busy = self._in_use()
-        for spoke in self.db.spokes():
+        for spoke in self.db.spokes(removed=True):   # a removed spoke's copies still get filed
             events = self.db.all("SELECT * FROM events WHERE spoke_id = ? AND state != 'scheduled'", spoke['id'])
             grouped, _ = recordings.match(events, recordings.spoke_copies(spoke['id']), now)
             for event in events:
@@ -214,11 +216,25 @@ class Library:
                     source = ['-f', 'concat', '-safe', '0', '-i', str(listing)]
                 else:
                     source = ['-i', str(held[0][1])]
+                stream = target.with_name(f'.{target.name}.ts')
+                if kind == 'hub':
+                    # The hub's own recording begins with stand-in H.264 settings in its header (MediaMTX
+                    # writes it before it has seen the stream's), which players warn about. Through MPEG-TS,
+                    # the header is made again from the settings in the stream itself; not re-encoded.
+                    passed = subprocess.run(
+                        [settings.FFMPEG_BIN, '-hide_banner', '-loglevel', 'error', '-y', *source,
+                         '-map', '0:v:0', '-map', '0:a?', '-c', 'copy', '-f', 'mpegts', str(stream)],
+                        capture_output=True, text=True)
+                    if passed.returncode == 0:
+                        source = ['-i', str(stream)]
+                    else:
+                        print(f"Remaking the hub recording's header failed, filing it as it is: {passed.stderr.strip()}")
                 inputs, embed = self.embed_args(event, 1)
                 result = subprocess.run(
                     [settings.FFMPEG_BIN, '-hide_banner', '-loglevel', 'error', '-y', *source, *inputs,
                      '-map', '0:v:0', '-map', '0:a?', '-c', 'copy', *embed, '-movflags', '+faststart',
                      '-f', 'mp4', str(partial)], capture_output=True, text=True)
+                stream.unlink(missing_ok=True)
             if result.returncode != 0:
                 print(f"Filing {kind} recording of broadcast {event['id']} failed: {result.stderr.strip()}")
                 partial.unlink(missing_ok=True)
@@ -242,13 +258,13 @@ class Library:
         return self.db.run('INSERT INTO library (event_id, kind, number, path, start, end, created_at) '
                            'VALUES (?, ?, ?, ?, ?, ?, ?)', event['id'], kind, number, str(path), start, end, time.time())
 
-    def edit_target(self, event):
-        """(number, path) for a new edit of a broadcast, in its folder."""
+    def new_target(self, event, kind):
+        """(number, path) for a new edit or short of a broadcast, in its folder."""
         with self.lock:
             event = self.event(event['id'])
-            number = (self.db.one("SELECT MAX(number) AS n FROM library WHERE event_id = ? AND kind = 'edit'",
-                                  event['id'])['n'] or 0) + 1
-            return number, self.folder(event) / file_name(event['title'], 'edit', number)
+            number = (self.db.one('SELECT MAX(number) AS n FROM library WHERE event_id = ? AND kind = ?',
+                                  event['id'], kind)['n'] or 0) + 1
+            return number, self.folder(event) / file_name(event['title'], kind, number)
 
     def folder(self, event):
         """The broadcast's folder in the recordings folder, made on first use."""
