@@ -9,6 +9,7 @@
 # settings and recordings stay.
 #
 #   $env:TOUCHSTREAM_UNINSTALL = 1; irm ... | iex   remove the hub (keeps settings and recordings)
+#   $env:TOUCHSTREAM_UNINSTALL = 'everything'        and its settings, YouTube sign-ins and recordings (to the Recycle Bin)
 #   $env:TOUCHSTREAM_SOURCE                          install the hub from a folder or URL instead of GitHub
 #   $env:TOUCHSTREAM_PORT                            dashboard port (default: 8080, or the next free one)
 #   $env:TOUCHSTREAM_NO_OPEN                         don't open the dashboard at the end (the installer app sets it)
@@ -83,8 +84,11 @@ $Uv = "$HOME\.local\bin\uv.exe"
 
 # ---- Uninstall ----
 if ($env:TOUCHSTREAM_UNINSTALL) {
+    Say 'Stopping the hub'
     Stop-Hub
+    Say 'Removing the hub'
     Unregister-ScheduledTask -TaskName $Task -Confirm:$false -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName "$Task Update" -Confirm:$false -ErrorAction SilentlyContinue
     Remove-Item $Shortcut -Force -ErrorAction SilentlyContinue
     if (Test-Path $Uv) {
         # uv reports on stderr, which Windows PowerShell would treat as a failure here
@@ -93,6 +97,19 @@ if ($env:TOUCHSTREAM_UNINSTALL) {
     if (Get-NetFirewallRule -DisplayName $Rules -ErrorAction SilentlyContinue) {
         Say 'Removing the firewall rules (Windows asks for permission)'
         Invoke-Elevated "Remove-NetFirewallRule -DisplayName '$Rules'" | Out-Null
+    }
+    if ($env:TOUCHSTREAM_UNINSTALL -eq 'everything') {
+        # Its settings and sign-ins, and the default recordings folder, to the Recycle Bin (a recordings
+        # folder chosen in the dashboard stays: it may hold other things)
+        Say 'Moving its settings and recordings to the Recycle Bin'
+        Add-Type -AssemblyName Microsoft.VisualBasic
+        foreach ($folder in @($Data, (Join-Path ([Environment]::GetFolderPath('MyVideos')) 'TouchStream'))) {
+            if (Test-Path $folder) {
+                [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($folder, 'OnlyErrorDialogs', 'SendToRecycleBin')
+            }
+        }
+        Say 'TouchStream Hub removed, with its settings and recordings: they''re in the Recycle Bin until you empty it.'
+        return
     }
     Say "TouchStream Hub removed. Your settings are still in $Data and your recordings where you chose."
     return

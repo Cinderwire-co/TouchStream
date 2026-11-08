@@ -29,22 +29,39 @@ export function HubAddressButton() {
   </span>`;
 }
 
-export function AddSpokeModal({ discovered, hub, onClose }) {
+/** Adopt a spoke found on the network, or pair one with a code; either way, then name it. */
+export function AddSpokeModal({ discovered: first, hub, onClose }) {
   const [pairing, setPairing] = useState(null);
   const [error, setError] = useState('');
   const [now, setNow] = useState(Date.now() / 1000);
+  const [discovered, setDiscovered] = useState(first);
+  const [known, setKnown] = useState(null);     // spoke ids when it opened: a new one has just paired
+  const [naming, setNaming] = useState(null);   // {id, name}: the spoke just added
   useEffect(() => { api('POST', '/api/pairing').then(setPairing).catch((e) => setError(e.message)); }, []);
   useEffect(() => { const t = setInterval(() => setNow(Date.now() / 1000), 1000); return () => clearInterval(t); }, []);
+  usePoll(async () => {
+    if (naming) return;
+    const d = await api('GET', '/api/dashboard');
+    setDiscovered(d.discovered);
+    if (!known) return setKnown(d.spokes.map((s) => s.id));
+    const added = d.spokes.find((s) => !known.includes(s.id));
+    if (added) setNaming({ id: added.id, name: added.name });
+  }, 2000, [known, naming]);
   const left = pairing ? Math.max(0, Math.round(pairing.expires_at - now)) : 0;
-  const adopt = async (ip) => {
-    try { await api('POST', `/api/discovered/${ip}/adopt`); onClose(); } catch (e) { setError(e.message); }
+  const adopt = async (s) => {
+    try {
+      const { id } = await api('POST', `/api/discovered/${s.ip}/adopt`);
+      setNaming({ id, name: s.name });
+    } catch (e) { setError(e.message); }
   };
+  if (naming) return html`<${NameSpokeModal} spoke=${naming} onClose=${onClose} />`;
   return html`<${Modal} title="Add a spoke" onClose=${onClose}>
     ${discovered.length > 0 && html`<div class="form" style="margin-bottom:22px">
       <span class="eyebrow">On your network</span>
       ${discovered.map((s) => html`<div class="row">
         <span class="dot ok"></span><div class="grow"><b>${s.name}</b><div class="muted small mono">${s.ip}</div></div>
-        <button class="btn primary small" onClick=${() => adopt(s.ip)}>Adopt</button></div>`)}
+        <button class="btn primary small" onClick=${() => adopt(s)}>Adopt</button></div>`)}
+      <p class="muted small">Its screen shows the same name. A spoke you bought ready to go shows up here once it's plugged in.</p>
     </div>`}
     <span class="eyebrow">Pair with a code</span>
     <ol class="steps" style="margin:12px 0 16px">
@@ -57,6 +74,32 @@ export function AddSpokeModal({ discovered, hub, onClose }) {
       ${left > 0 ? `Expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : 'Code expired'}</p>
     ${error && html`<p class="error">${error}</p>`}
     <div class="modal-foot"><button class="btn ghost" onClick=${onClose}>Done</button></div>
+  </${Modal}>`;
+}
+
+/** A spoke has just been added: name it for its room (its screen takes the new name). */
+function NameSpokeModal({ spoke, onClose }) {
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+  const save = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) return onClose();
+    try {
+      await api('PATCH', `/api/spokes/${spoke.id}`, { name: name.trim() });
+      toast(`Named it ${name.trim()}`);
+      onClose();
+    } catch (err) { setError(err.message); }
+  };
+  return html`<${Modal} title="Name your spoke" onClose=${onClose}>
+    <form class="form" onSubmit=${save}>
+      <p><b>${spoke.name}</b> is paired with this hub.</p>
+      <label class="field"><span>Its name</span>
+        <input type="text" maxlength="60" placeholder="Sanctuary" autofocus value=${name} onInput=${(e) => setName(e.target.value)} /></label>
+      <p class="muted small">Name it for the room it's in. Its screen shows the new name, and you can change it in its settings.</p>
+      ${error && html`<p class="error">${error}</p>`}
+      <div class="modal-foot"><button type="button" class="btn ghost" onClick=${onClose}>Keep ${spoke.name}</button>
+        <button class="btn primary">Save</button></div>
+    </form>
   </${Modal}>`;
 }
 

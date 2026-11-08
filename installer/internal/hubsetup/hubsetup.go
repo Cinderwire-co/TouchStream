@@ -140,9 +140,51 @@ var (
 // installs the hub from a folder or URL instead of GitHub (for developers). It returns the
 // dashboard's address.
 func Install(ctx context.Context, source string, each func(Line)) (string, error) {
+	var env []string
+	if source != "" {
+		env = append(env, "TOUCHSTREAM_SOURCE="+source)
+	}
+	url, last, err := run(ctx, env, nil, each)
+	if err != nil {
+		return "", fmt.Errorf("the hub didn't install: %s", last)
+	}
+	if url == "" {
+		url = Find(ctx).URL
+	}
+	if url == "" {
+		return "", errors.New("the hub installed, but didn't start")
+	}
+	return url, nil
+}
+
+// Uninstall removes the hub from this computer: it stops starting with it, and leaves Applications
+// (or the Start menu). Its settings and recordings stay for a hub installed again, unless everything,
+// which moves them to the Trash (the Recycle Bin on Windows) too.
+func Uninstall(ctx context.Context, everything bool, each func(Line)) error {
+	var env, args []string
+	if runtime.GOOS == "windows" {
+		env = []string{"TOUCHSTREAM_UNINSTALL=1"}
+		if everything {
+			env = []string{"TOUCHSTREAM_UNINSTALL=everything"}
+		}
+	} else {
+		args = []string{"--uninstall"}
+		if everything {
+			args = append(args, "--everything")
+		}
+	}
+	if _, last, err := run(ctx, env, args, each); err != nil {
+		return fmt.Errorf("the hub wasn't removed: %s", last)
+	}
+	return nil
+}
+
+// run runs this computer's hub script with env and args, calling each with its output: it returns
+// the dashboard's address if the script gave one, and its last line.
+func run(ctx context.Context, env, args []string, each func(Line)) (url, last string, err error) {
 	dir, err := os.MkdirTemp("", "touchstream-install-")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer os.RemoveAll(dir)
 	var cmd *exec.Cmd
@@ -150,33 +192,29 @@ func Install(ctx context.Context, source string, each func(Line)) (string, error
 	case "darwin":
 		script := filepath.Join(dir, "macos.sh")
 		if err := copyScript("scripts/macos.sh", script); err != nil {
-			return "", err
+			return "", "", err
 		}
-		cmd = exec.CommandContext(ctx, "/bin/bash", script)
+		cmd = exec.CommandContext(ctx, "/bin/bash", append([]string{script}, args...)...)
 	case "windows":
 		script := filepath.Join(dir, "windows.ps1")
 		if err := copyScript("scripts/windows.ps1", script); err != nil {
-			return "", err
+			return "", "", err
 		}
 		cmd = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script)
 		hideWindow(cmd)
 	default:
-		return "", errors.New("the installer is for macOS and Windows: on Linux, use the one-line install in docs/hub.md")
+		return "", "", errors.New("the installer is for macOS and Windows: on Linux, use the one-line install in docs/hub.md")
 	}
-	cmd.Env = append(os.Environ(), "NONINTERACTIVE=1", "TOUCHSTREAM_NO_OPEN=1")
-	if source != "" {
-		cmd.Env = append(cmd.Env, "TOUCHSTREAM_SOURCE="+source)
-	}
+	cmd.Env = append(append(os.Environ(), "NONINTERACTIVE=1", "TOUCHSTREAM_NO_OPEN=1"), env...)
 	cmd.Stdin = nil // nothing to type into: a prompt gets end-of-input instead of waiting forever
 	out, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	cmd.Stderr = cmd.Stdout
 	if err := cmd.Start(); err != nil {
-		return "", err
+		return "", "", err
 	}
-	var url, last string
 	lines := bufio.NewScanner(out)
 	for lines.Scan() {
 		text := strings.TrimSpace(colors.ReplaceAllString(lines.Text(), ""))
@@ -193,16 +231,7 @@ func Install(ctx context.Context, source string, each func(Line)) (string, error
 		}
 		last = text
 	}
-	if err := cmd.Wait(); err != nil {
-		return "", fmt.Errorf("the hub didn't install: %s", strings.TrimPrefix(last, "Error: "))
-	}
-	if url == "" {
-		url = Find(ctx).URL
-	}
-	if url == "" {
-		return "", errors.New("the hub installed, but didn't start")
-	}
-	return url, nil
+	return url, strings.TrimPrefix(last, "Error: "), cmd.Wait()
 }
 
 func copyScript(name, to string) error {

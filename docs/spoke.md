@@ -22,9 +22,22 @@ spoke's settings in the dashboard; the spoke asks its HDMI source for it.
 
 ## Install
 
-The TouchStream installer, for Mac and Windows, sets up the hub and then, for each spoke, writes the spoke's software
-to a microSD card, already paired with your hub. Put the card in the box, plug in HDMI, Ethernet and power, and it
-shows up in the dashboard.
+The TouchStream installer, for Mac and Windows, sets up the hub and then asks where your spoke came from:
+
+- **Ready to go, from Cinderwire**: TouchStream is already on it, with its 32 GB card in. Plug in HDMI, Ethernet and
+  power: its screen shows its own name (like "Spoke 4F2A"), the installer finds it on the network, and you pair it and
+  name it for its room. If the hub can't see the network (Docker, or another network), it gives you a code to enter
+  on the spoke's screen instead.
+- **A PicoKVM you bought yourself**: the installer writes the spoke's software to a microSD card for each, already
+  paired with your hub. Put the card in the box, plug in HDMI, Ethernet and power, and it shows up in the dashboard.
+
+**Add spoke** in the dashboard does the same for a spoke you add later: adopt it with one click, or pair it with a
+code on its screen, then name it.
+
+**Spokes to sell or give away**: the installer's first page has **Setting up spokes to sell or give away?**, which
+writes plain cards: no hub and no name, so each box keeps its own ("Spoke 4F2A") until its new owner pairs it. Put the
+card in, plug in power, and the box installs TouchStream and keeps the card for its recordings. To test one, pair it
+with your hub, then remove it from the hub: it goes back to waiting for a hub, with its own name.
 
 You need a microSD card of 32 GB or more for each spoke (a "high endurance" card lasts longest), and a card reader if
 the computer has no SD slot. The installer only offers removable cards, never the computer's own disks, and shows

@@ -13,6 +13,7 @@ const ready = () => new Promise((resolve) => {
 const state = {
   info: {}, hub: null, hubURL: '', signedIn: false,
   names: [''], index: 0, image: null, written: [],
+  plain: false,   // writing plain cards, for spokes that go to someone else (no hub, no name)
 };
 
 // ---- A little DOM ----
@@ -34,8 +35,11 @@ const sizeLabel = (n) => `${(n / 1e9).toFixed(n < 10e9 ? 1 : 0)} GB`;
 const percent = (p) => (p.total ? Math.round((p.done / p.total) * 100) : 0);
 
 const STEPS = ['The hub', 'Password', 'Spokes', 'Your box', 'Cards', 'Done'];
+const PLAIN_STEPS = ['Plain cards', 'Cards', 'Done'];
 function rail(now) {
-  $('steps').replaceChildren(...STEPS.map((name, i) => h('li', { class: i < now ? 'done' : i === now ? 'now' : '' },
+  const steps = state.plain ? PLAIN_STEPS : STEPS;
+  if (state.plain) now = Math.max(0, now - 3);
+  $('steps').replaceChildren(...steps.map((name, i) => h('li', { class: i < now ? 'done' : i === now ? 'now' : '' },
     h('i', {}, i < now ? '✓' : String(i + 1)), name)));
 }
 function problem(err) {
@@ -47,11 +51,13 @@ const listeners = {};
 
 // ---- 1. Welcome ----
 function welcome() {
+  state.plain = false;
   rail(-1);
   page(
     h('h1', {}, 'Set up TouchStream'),
-    h('p', { class: 'lead' }, 'This puts the hub on this computer, then writes a microSD card for each spoke. Put a card in its box, plug it in, and it shows up in the dashboard, ready to go live.'),
-    h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: findHub }, 'Get started')));
+    h('p', { class: 'lead' }, 'This puts the hub on this computer, then adds your spokes: it pairs one that came ready to go, or writes a microSD card for a PicoKVM you bought yourself. Either way it shows up in the dashboard, ready to go live.'),
+    h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: findHub }, 'Get started'),
+      h('span', { class: 'spacer' }), h('button', { class: 'link', onclick: plainCards }, 'Setting up spokes to sell or give away?')));
 }
 
 // ---- 2. The hub ----
@@ -67,9 +73,10 @@ async function findHub() {
       h('div', { class: 'panel' }, h('div', { class: 'row' }, h('span', { class: 'ok' }, '●'),
         h('div', { class: 'grow' }, h('b', {}, 'Installed and running'), h('div', { class: 'muted small mono' }, `${found.url} · version ${found.version}`)))),
       h('p', {}, 'You can carry on with it as it is, or update it to this installer’s version first. Updating keeps your settings and recordings.'),
-      h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: password }, 'Continue'),
+      h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => password() }, 'Continue'),
         h('button', { onclick: installHub }, 'Update it'),
-        h('span', { class: 'spacer' }), h('button', { class: 'link', onclick: remoteHub }, 'Use a hub on another computer')));
+        h('span', { class: 'spacer' }), h('button', { class: 'link', onclick: remoteHub }, 'Use a hub on another computer')),
+      h('p', { class: 'small' }, h('button', { class: 'link', onclick: removeHub }, 'Remove the hub from this computer')));
     return;
   }
   page(
@@ -78,7 +85,65 @@ async function findHub() {
       ? h('p', { class: 'lead' }, 'The hub is installed on this computer, but it isn’t answering. Installing it again starts it, and keeps your settings and recordings.')
       : h('p', { class: 'lead' }, 'The hub runs your schedule, records every broadcast, and is where you watch and edit. It installs everything it needs, and starts with this computer from now on.'),
     h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: installHub }, found.installed ? 'Start it again' : 'Install the hub'),
-      h('span', { class: 'spacer' }), h('button', { class: 'link', onclick: remoteHub }, 'The hub is on another computer')));
+      h('span', { class: 'spacer' }), h('button', { class: 'link', onclick: remoteHub }, 'The hub is on another computer')),
+    found.installed && h('p', { class: 'small' }, h('button', { class: 'link', onclick: removeHub }, 'Remove the hub from this computer')));
+}
+
+// ---- Removing the hub ----
+function removeHub() {
+  rail(0);
+  const trash = state.info.os === 'windows' ? 'Recycle Bin' : 'Trash';
+  const everything = h('input', { type: 'checkbox' });
+  const sure = h('label', { class: 'check', hidden: true }, h('input', { type: 'checkbox', onchange: (e) => { go.disabled = !e.target.checked; } }),
+    h('span', {}, 'Yes, my recordings and YouTube connections go too'));
+  const go = h('button', { class: 'primary', onclick: () => uninstall(everything.checked) }, 'Remove the hub');
+  everything.addEventListener('change', () => {
+    sure.hidden = !everything.checked;
+    sure.querySelector('input').checked = false;
+    go.className = everything.checked ? 'danger' : 'primary';
+    go.textContent = everything.checked ? 'Remove everything' : 'Remove the hub';
+    go.disabled = everything.checked;
+  });
+  page(
+    h('h1', {}, 'Remove the hub'),
+    h('p', { class: 'lead' }, 'The hub stops, stops starting with this computer, and leaves ', state.info.os === 'windows' ? 'the Start menu' : 'Applications',
+      '. Your spokes stay as they are: they wait for a hub until you install one again.'),
+    h('div', { class: 'panel' },
+      h('label', { class: 'check' }, everything, h('span', {}, 'Remove its settings and recordings too',
+        h('div', { class: 'muted small' }, `The dashboard password, connected YouTube channels, schedule and the recordings in ${state.info.os === 'windows' ? 'Videos' : 'Movies'} › TouchStream go to the ${trash}. Without this, they stay for a hub installed again.`))),
+      sure),
+    h('div', { class: 'actions' }, go, h('button', { onclick: findHub }, 'Back')));
+}
+
+async function uninstall(everything) {
+  rail(0);
+  const stepsLog = h('div', { class: 'steps-log' });
+  page(h('h1', {}, 'Removing the hub'), stepsLog);
+  let current = null;
+  listeners['hub:line'] = (line) => {
+    if (!line.step) return;
+    if (current) current.replaceChildren(h('span', { class: 'tick ok' }, '✓'), current.dataset.text);
+    current = h('div', { class: 'now', 'data-text': line.text }, spinner(), line.text);
+    stepsLog.append(current);
+  };
+  try {
+    await api.UninstallHub(everything);
+    state.hub = null;
+    state.hubURL = '';
+    state.signedIn = false;
+    page(
+      h('h1', {}, 'The hub is removed'),
+      h('p', { class: 'lead' }, everything
+        ? `Its settings and recordings are in the ${state.info.os === 'windows' ? 'Recycle Bin' : 'Trash'} until you empty it. A recordings folder you chose yourself is left as it was.`
+        : 'Its settings and recordings are still on this computer: install the hub again and it picks up where it left off.'),
+      h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => window.runtime.Quit() }, 'Close'),
+        h('button', { onclick: findHub }, 'Install it again')));
+  } catch (err) {
+    page(h('h1', {}, 'The hub wasn’t removed'), problem(err),
+      h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => uninstall(everything) }, 'Try again'), h('button', { onclick: findHub }, 'Back')));
+  } finally {
+    delete listeners['hub:line'];
+  }
 }
 
 async function installHub() {
@@ -142,7 +207,8 @@ function remoteHub() {
 }
 
 // ---- 3. The dashboard's password ----
-function password() {
+// then on to next (pairing a spoke needs it)
+function password(next = spokesAsk) {
   rail(1);
   const fresh = state.hub && state.hub.setup_needed;
   const pw = h('input', { type: 'password', autofocus: true });
@@ -157,7 +223,7 @@ function password() {
         await api.SignIn(state.hubURL, pw.value);
       }
       state.signedIn = true;
-      spokesAsk();
+      next();
     } catch (err) { status.replaceChildren(problem(err)); }
   };
   page(
@@ -166,17 +232,147 @@ function password() {
       : 'The dashboard’s password. Signing in lets the installer pair each spoke with the hub.'),
     h('label', {}, 'Password', pw), fresh && h('label', {}, 'Again', again), status,
     h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: go }, 'Continue'),
-      h('span', { class: 'spacer' }), !fresh && h('button', { class: 'link', onclick: () => { state.signedIn = false; spokesAsk(); } }, 'Skip: I’ll adopt spokes in the dashboard')));
+      h('span', { class: 'spacer' }), !fresh && next === spokesAsk && h('button', { class: 'link', onclick: () => { state.signedIn = false; spokesAsk(); } }, 'Skip: I’ll adopt spokes in the dashboard')));
   for (const input of [pw, again]) input.addEventListener('keydown', (e) => e.key === 'Enter' && go());
 }
 
-// ---- 4. Spokes? ----
+// ---- 4. Spokes? Ready to go, or a PicoKVM of your own ----
+function choice(title, body, onclick) {
+  return h('button', { class: 'card choice', onclick }, h('div', { class: 'grow' }, h('b', {}, title), h('div', { class: 'muted small' }, body)), h('span', { class: 'go' }, '→'));
+}
+
 function spokesAsk() {
   rail(2);
   page(
-    h('h1', {}, 'Are you setting up spokes now?'),
-    h('p', { class: 'lead' }, 'A spoke is the box next to your camera or video switcher. Each one needs its own microSD card, which the installer writes here.'),
-    h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: box }, 'Yes, set up spokes'), h('button', { onclick: done }, 'Not now')));
+    h('h1', {}, 'Where did your spoke come from?'),
+    h('p', { class: 'lead' }, 'A spoke is the small box beside your camera or video switcher.'),
+    h('div', { class: 'cards' },
+      choice('Ready to go, from Cinderwire', 'TouchStream is already on it, with its 32 GB card in. Plug it in and pair it: there’s no card to write.', readySpokes),
+      choice('A PicoKVM I bought myself', 'From Waveshare, Amazon or another shop. The installer writes a microSD card that puts TouchStream on it.', box)),
+    h('div', { class: 'actions' }, h('button', { onclick: done }, 'No spokes now')));
+}
+
+// ---- 5. Spokes that came ready to go: plug in, pair, name ----
+let watching = null;
+function readySpokes() {
+  if (!state.signedIn) return password(readySpokes);
+  rail(3);
+  clearInterval(watching);
+  const art = h('div', { html: boxArt() });
+  const found = h('div', { class: 'cards' });
+  const fallback = h('div');
+  const status = h('div');
+  const naming = {};      // ip or id -> the name typed so far (kept as the list redraws)
+  let known = null;       // the hub's spokes when this page opened: a new one paired with a code
+  let code = null;
+  const finish = h('button', { class: 'primary', onclick: () => { clearInterval(watching); done(); } }, 'Finish');
+  const named = () => state.written.filter((s) => s && s.ready);
+
+  const nameInput = (key, placeholder) => {
+    const input = h('input', { type: 'text', placeholder, maxlength: '60', value: naming[key] || '' });
+    input.addEventListener('input', () => { naming[key] = input.value; });
+    return input;
+  };
+  const pair = async (s, button) => {
+    button.disabled = true;
+    try {
+      const name = (naming[s.ip] || '').trim();
+      known.push(await api.Adopt(s.ip, name));
+      state.written.push({ name: name || s.name, paired: true, ready: true });
+      status.replaceChildren();
+      refresh();
+    } catch (err) { button.disabled = false; status.replaceChildren(problem(err)); }
+  };
+  const keep = async (s, button) => {   // one paired with a code: name it
+    button.disabled = true;
+    try {
+      const name = (naming[s.id] || '').trim();
+      if (name) await api.NameSpoke(s.id, name);
+      known.push(s.id);
+      state.written.push({ name: name || s.name, paired: true, ready: true });
+      refresh();
+    } catch (err) { button.disabled = false; status.replaceChildren(problem(err)); }
+  };
+  const showCode = async (n) => {
+    try { code = code || await api.PairingCode(); } catch (err) { return fallback.replaceChildren(problem(err)); }
+    const address = n.hub && n.hub.ip ? `${n.hub.ip}:${n.hub.port}` : 'this computer’s IP address';
+    fallback.replaceChildren(h('div', { class: 'panel' },
+      h('b', {}, n.discovery === false ? 'Pair it on its own screen' : 'Not showing up? Pair it on its own screen'),
+      h('ol', { class: 'how' },
+        h('li', {}, 'On the spoke’s screen, tap anywhere, then ', h('b', {}, 'Connect to hub'), '.'),
+        h('li', {}, 'Enter the hub’s address: ', h('b', { class: 'mono' }, address)),
+        h('li', {}, 'Enter the code ', h('b', { class: 'mono' }, code.code), '. It works for 10 minutes.'))));
+  };
+
+  const draw = (n) => {
+    const fresh = known ? n.spokes.filter((s) => !known.includes(s.id)) : [];
+    const rows = [
+      ...named().map((s) => h('div', { class: 'card' }, h('span', { class: 'ok' }, '✓'), h('div', { class: 'grow' }, h('b', {}, s.name), h('div', { class: 'muted small' }, 'Paired with the hub')))),
+      ...fresh.map((s) => {
+        const button = h('button', { class: 'primary' }, 'Save');
+        button.addEventListener('click', () => keep(s, button));
+        return h('div', { class: 'card found' }, h('span', { class: 'ok' }, '●'),
+          h('div', { class: 'grow' }, h('b', {}, `${s.name} is paired`), h('div', { class: 'muted small' }, 'Name it for its room')),
+          nameInput(s.id, 'Sanctuary'), button);
+      }),
+      ...n.found.map((s) => {
+        const button = h('button', { class: 'primary' }, 'Pair');
+        button.addEventListener('click', () => pair(s, button));
+        return h('div', { class: 'card found' }, h('span', { class: 'ok' }, '●'),
+          h('div', { class: 'grow' }, h('b', {}, s.name), h('div', { class: 'muted small mono' }, s.ip)),
+          nameInput(s.ip, 'Name it: Sanctuary'), button);
+      }),
+    ];
+    if (!n.found.length && !fresh.length && n.discovery !== false) {
+      rows.push(h('div', { class: 'panel row' }, spinner(), h('span', { class: 'muted' }, named().length ? 'Looking for more spokes…' : 'Looking for it on the network… It shows up a minute or so after it’s plugged in.')));
+    }
+    // keep what's being typed: only redraw when the list itself changes
+    const key = JSON.stringify([named().length, fresh.map((s) => s.id), n.found.map((s) => s.ip), n.discovery]);
+    if (found.dataset.key !== key) { found.dataset.key = key; found.replaceChildren(...rows); }
+    if (n.discovery === false && !code) showCode(n);
+    finish.textContent = named().length ? 'Finish' : 'Skip: I’ll pair it later';
+    finish.className = named().length ? 'primary' : '';
+  };
+  let last = null;
+  const refresh = async () => {
+    try {
+      const n = await api.Nearby();
+      last = { discovery: n.discovery, found: n.discovered || [], spokes: n.spokes || [], hub: n.hub };
+      if (!known) known = last.spokes.map((s) => s.id);
+      draw(last);
+    } catch (err) { status.replaceChildren(problem(err)); }
+  };
+
+  page(
+    h('h1', {}, 'Plug in your spoke'),
+    h('div', { class: 'box wide' }, art.firstElementChild, h('ol', { class: 'how' },
+      h('li', {}, 'Plug HDMI from your camera or switcher into ', h('b', {}, 'HDMI IN'), '.'),
+      h('li', {}, 'Plug Ethernet into the same network as the hub.'),
+      h('li', {}, 'Plug in power (USB-C) last. Its screen lights up with its own name, like ', h('b', {}, 'Spoke 4F2A'), '.'))),
+    found, status, fallback,
+    h('div', { class: 'actions' }, finish, h('span', { class: 'spacer' }),
+      h('button', { class: 'link', onclick: () => last && showCode(last) }, 'Pair it on its own screen instead')));
+  refresh();
+  watching = setInterval(refresh, 2000);
+}
+
+// ---- Plain cards: for spokes that go to someone else ----
+function plainCards() {
+  state.plain = true;
+  state.names = [''];
+  state.index = 0;
+  state.written = [];
+  rail(3);
+  page(
+    h('h1', {}, 'Spokes to sell or give away'),
+    h('p', { class: 'lead' }, 'Plain cards put TouchStream on a PicoKVM with no hub and no name of yours: each box calls itself by its chip, like ', h('b', {}, 'Spoke 4F2A'), ', until its new owner pairs it and names it.'),
+    h('div', { class: 'panel' }, h('ol', { class: 'how' },
+      h('li', {}, 'Write a card, and put it in the box while it’s unplugged.'),
+      h('li', {}, 'Plug in power. It puts TouchStream on the box, restarts, and keeps the card for its recordings: leave it in.'),
+      h('li', {}, 'Test it if you like: pair it with your own hub, then remove it from the hub. It goes back to waiting for a hub, with its own name.'),
+      h('li', {}, 'Ship it with the card in. Its owner runs this installer and chooses ', h('b', {}, 'Ready to go'), '.'))),
+    h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: getImage }, 'Write plain cards'),
+      h('button', { onclick: welcome }, 'Back')));
 }
 
 // ---- 5. Is it the right box? ----
@@ -274,9 +470,10 @@ async function pickImage() {
 
 // ---- 8. A card for each spoke ----
 let polling = null;
+const cardName = () => (state.plain ? `card ${state.index + 1}` : state.names[state.index]);
 function card() {
   rail(4);
-  const name = state.names[state.index];
+  const name = cardName();
   let chosen = null;
   const list = h('div', { class: 'cards' });
   const confirm = h('div');
@@ -302,10 +499,10 @@ function card() {
     confirm.replaceChildren(h('div', { class: 'panel warn' },
       h('p', {}, 'Everything on ', h('b', {}, `${c.name} (${sizeLabel(c.size)})`), ' will be erased',
         c.volumes && c.volumes.length ? [', including ', h('b', {}, c.volumes.join(', '))] : '', '.'),
-      h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => write(c) }, `Erase it and write ${name}`))));
+      h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => write(c) }, state.plain ? 'Erase it and write a plain card' : `Erase it and write ${name}`))));
   };
   page(
-    h('h1', {}, state.names.length > 1 ? `Card ${state.index + 1} of ${state.names.length}: ${name}` : `${name}’s card`),
+    h('h1', {}, state.plain ? `Plain card ${state.index + 1}` : state.names.length > 1 ? `Card ${state.index + 1} of ${state.names.length}: ${name}` : `${name}’s card`),
     h('p', {}, 'Put a microSD card in this computer, and choose it.'),
     list, confirm);
   const refresh = async () => {
@@ -318,19 +515,20 @@ function card() {
 
 async function write(c) {
   clearInterval(polling);
-  const name = state.names[state.index];
+  const name = cardName();
   const bar = h('i', { style: 'width:0%' });
   const text = h('p', { class: 'small' }, state.info.os === 'windows'
     ? 'Windows will ask for permission: writing a card needs it.' : 'Your Mac will ask for your password: writing a card needs it.');
-  page(h('h1', {}, `Writing ${name}’s card`), h('div', { class: 'bar' }, bar), text,
+  page(h('h1', {}, state.plain ? `Writing plain ${name}` : `Writing ${name}’s card`), h('div', { class: 'bar' }, bar), text,
     h('p', { class: 'small muted' }, 'Leave the card in until it’s done. Then every byte is read back and checked.'));
   listeners['card:progress'] = (p) => {
     bar.style.width = `${percent(p)}%`;
     text.textContent = p.phase === 'checking' ? `Checking… ${percent(p)}%` : p.phase === 'writing' ? `Writing… ${percent(p)}%` : text.textContent;
   };
   try {
-    const result = await api.WriteCard(c, name);
+    const result = state.plain ? await api.WritePlainCard(c) : await api.WriteCard(c, name);
     state.written[state.index] = { name, ...result };
+    if (state.plain) return plainWritten(result);
     const last = state.index === state.names.length - 1;
     const art = h('div', { html: boxArt({ screen: 'off', card: true }) });
     page(
@@ -347,22 +545,44 @@ async function write(c) {
       h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => { if (last) done(); else { state.index += 1; card(); } } },
         last ? 'Finish' : `Next: ${state.names[state.index + 1]}’s card`)));
   } catch (err) {
-    page(h('h1', {}, `${name}’s card wasn’t written`), problem(err),
+    page(h('h1', {}, state.plain ? `Plain ${name} wasn’t written` : `${name}’s card wasn’t written`), problem(err),
       h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: card }, 'Try again')));
   } finally {
     delete listeners['card:progress'];
   }
 }
 
+function plainWritten(result) {
+  const art = h('div', { html: boxArt({ screen: 'off', card: true }) });
+  page(
+    h('h1', {}, `Plain card ${state.index + 1} is ready`),
+    h('div', { class: 'box wide' }, art.firstElementChild, h('ol', { class: 'how' },
+      h('li', {}, 'Put it in an unplugged box, in the slot beside ', h('b', {}, 'RESET'), ' and ', h('b', {}, 'BOOT'), ', gold contacts first.'),
+      h('li', {}, 'Plug in power. TouchStream installs itself and restarts, then the screen shows the box’s own name.'),
+      h('li', {}, 'Leave the card in: it’s the spoke’s 32 GB for recordings.'))),
+    result.note && h('p', { class: 'small' }, result.note),
+    h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => { state.index += 1; card(); } }, 'Write another'),
+      h('button', { onclick: done }, 'Finish')));
+}
+
 // ---- 9. Done ----
 function done() {
   clearInterval(polling);
+  clearInterval(watching);
   rail(6);
   const spokes = state.written.filter(Boolean);
+  const cards = spokes.filter((s) => !s.ready);
+  if (state.plain) {
+    return page(
+      h('h1', {}, `${spokes.length} plain card${spokes.length === 1 ? '' : 's'} written`),
+      h('p', { class: 'lead' }, 'Each box installs TouchStream from its card the first time it’s plugged in. Ship them with the card in: their owners pair them with the installer’s Ready to go choice, or Add spoke in the dashboard.'),
+      h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => window.runtime.Quit() }, 'Close'), h('button', { onclick: welcome }, 'Back to the start')));
+  }
   page(
     h('h1', {}, 'TouchStream is set up'),
-    spokes.length ? h('p', { class: 'lead' }, 'Put each card in its box while it’s unplugged, then plug in HDMI from your camera or switcher, Ethernet, and power last. In a minute or so it shows up in the dashboard.')
-      : h('p', { class: 'lead' }, 'Run the installer again whenever you’re adding spokes.'),
+    cards.length ? h('p', { class: 'lead' }, 'Put each card in its box while it’s unplugged, then plug in HDMI from your camera or switcher, Ethernet, and power last. In a minute or so it shows up in the dashboard.')
+      : spokes.length ? h('p', { class: 'lead' }, 'Your spokes are paired with the hub. Open the dashboard to schedule your first broadcast.')
+      : h('p', { class: 'lead' }, 'Run the installer again whenever you’re adding spokes, or use Add spoke in the dashboard.'),
     spokes.length > 0 && h('div', { class: 'summary' }, spokes.map((s) => h('div', { class: 'row' }, h('span', { class: 'ok' }, '✓'),
       h('b', { class: 'grow' }, s.name), h('span', { class: 'muted small' }, s.paired ? 'paired with the hub' : 'adopt it in the dashboard')))),
     h('div', { class: 'actions' }, state.hubURL && h('button', { class: 'primary', onclick: async () => { await api.OpenURL(state.hubURL); window.runtime.Quit(); } }, 'Open the dashboard'),

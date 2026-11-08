@@ -79,6 +79,11 @@ func (a *App) InstallHub() (string, error) {
 	return hubsetup.Install(a.ctx, source, func(l hubsetup.Line) { wails.EventsEmit(a.ctx, "hub:line", l) })
 }
 
+// UninstallHub removes the hub from this computer; everything takes its settings and recordings too.
+func (a *App) UninstallHub(everything bool) error {
+	return hubsetup.Uninstall(a.ctx, everything, func(l hubsetup.Line) { wails.EventsEmit(a.ctx, "hub:line", l) })
+}
+
 // UseHub checks there's a hub at address (one on another computer, say).
 func (a *App) UseHub(address string) (hubsetup.Found, error) {
 	address = strings.TrimSpace(address)
@@ -305,9 +310,22 @@ type Written struct {
 // WriteCard writes the spoke called name to card: it registers the spoke with the hub (when signed
 // in), then writes and checks the card (asking for admin rights), then ejects it.
 func (a *App) WriteCard(card cards.Card, name string) (Written, error) {
+	return a.writeCard(card, name, true)
+}
+
+// WritePlainCard writes a card for a spoke that goes to someone else (one sold ready to go): no hub
+// and no name, so the box keeps its own ("Spoke 4F2A") until its new owner pairs it and names it.
+func (a *App) WritePlainCard(card cards.Card) (Written, error) {
+	return a.writeCard(card, "", false)
+}
+
+func (a *App) writeCard(card cards.Card, name string, pair bool) (Written, error) {
 	a.mu.Lock()
 	img, hub, settings := a.image, a.hub, a.settings
 	a.mu.Unlock()
+	if !pair {
+		hub, settings = nil, false
+	}
 	if img == "" {
 		return Written{}, errors.New("the spoke's software isn't ready yet")
 	}
@@ -346,7 +364,7 @@ func (a *App) WriteCard(card cards.Card, name string) (Written, error) {
 	_ = cards.Eject(card)
 	w := Written{Paired: spoke.ID != ""}
 	var notes []string
-	if p == nil {
+	if p == nil && pair {
 		notes = append(notes, "This version of the spoke's software can't take the hub's address, so the card isn't paired.")
 	}
 	if runtime.GOOS == "windows" {
@@ -411,4 +429,60 @@ func lastError(progress string) error {
 		return errors.New(p.Error)
 	}
 	return errors.New("the card didn't get written: try again, or try another card")
+}
+
+// ---- A spoke that came ready to go ----
+
+// Nearby is what the hub sees: spokes waiting on its network, and the spokes it has.
+func (a *App) Nearby() (hubapi.Nearby, error) {
+	hub, err := a.signedIn()
+	if err != nil {
+		return hubapi.Nearby{}, err
+	}
+	return hub.Nearby(a.ctx)
+}
+
+// Adopt pairs the spoke found at ip with the hub, and names it (when name isn't empty).
+func (a *App) Adopt(ip, name string) (string, error) {
+	hub, err := a.signedIn()
+	if err != nil {
+		return "", err
+	}
+	id, err := hub.Adopt(a.ctx, ip)
+	if err != nil {
+		return "", err
+	}
+	if name = strings.TrimSpace(name); name != "" {
+		if err := hub.Rename(a.ctx, id, name); err != nil {
+			return id, fmt.Errorf("it's paired, but naming it didn't work (%w): rename it in the dashboard", err)
+		}
+	}
+	return id, nil
+}
+
+// NameSpoke names a spoke that has just paired (with a code, on its own screen).
+func (a *App) NameSpoke(id, name string) error {
+	hub, err := a.signedIn()
+	if err != nil {
+		return err
+	}
+	return hub.Rename(a.ctx, id, strings.TrimSpace(name))
+}
+
+// PairingCode is a code for pairing a spoke on its own screen.
+func (a *App) PairingCode() (hubapi.Code, error) {
+	hub, err := a.signedIn()
+	if err != nil {
+		return hubapi.Code{}, err
+	}
+	return hub.PairingCode(a.ctx)
+}
+
+func (a *App) signedIn() (*hubapi.Client, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.hub == nil {
+		return nil, errors.New("sign in to the hub first")
+	}
+	return a.hub, nil
 }

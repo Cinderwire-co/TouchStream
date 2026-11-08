@@ -8,7 +8,8 @@
 # starts the hub now and at every login; adds "TouchStream Hub" to Applications;
 # and opens the dashboard. Run it again to update: settings and recordings stay.
 #
-#   ... | bash -s -- --uninstall    remove the hub (keeps your settings and recordings)
+#   ... | bash -s -- --uninstall                remove the hub (keeps your settings and recordings)
+#   ... | bash -s -- --uninstall --everything   and its settings, YouTube sign-ins and recordings (to the Trash)
 #
 #   TOUCHSTREAM_SOURCE   install the hub from a folder or URL instead of GitHub
 #   TOUCHSTREAM_PORT     dashboard port (default: 8080, or the next free one)
@@ -39,9 +40,23 @@ UV="$(command -v uv || true)"
 
 # ---- Uninstall ----
 if [ "${1:-}" = "--uninstall" ]; then
+    say "Stopping the hub"
     launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+    launchctl bootout "gui/$(id -u)/$LABEL-update" 2>/dev/null || true    # an update it had started
+    say "Removing the hub"
     rm -rf "$AGENT" "$APP"
     [ -n "$UV" ] && "$UV" tool uninstall touchstream-hub >/dev/null 2>&1 || true
+    if [ "${2:-}" = "--everything" ]; then
+        # Its settings and sign-ins, the default recordings folder and its log, to the Trash (a recordings
+        # folder chosen in the dashboard stays: it may hold other things)
+        say "Moving its settings and recordings to the Trash"
+        stamp="$(date '+%Y-%m-%d %H.%M.%S')"
+        for f in "$DATA" "$HOME/Movies/TouchStream" "$LOG"; do
+            [ -e "$f" ] && mv "$f" "$HOME/.Trash/$(basename "$f") $stamp"
+        done
+        say "TouchStream Hub removed, with its settings and recordings: they're in the Trash until you empty it."
+        exit 0
+    fi
     say "TouchStream Hub removed. Your settings are still in $DATA and your recordings where you chose."
     exit 0
 fi

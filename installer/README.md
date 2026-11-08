@@ -1,16 +1,18 @@
 # The TouchStream installer
 
 One app for Mac and Windows that sets up everything, with no terminal: it installs the hub (or finds it, or uses one
-on another computer), asks whether you're adding spokes, checks you have a Luckfox PicoKVM with its screen, then
-writes a microSD card for each spoke, paired with the hub. See [docs/spoke.md](../docs/spoke.md#install) for using it.
+on another computer, or removes it), then asks where your spokes came from. One that came ready to go is found on the
+network, paired and named; for a Luckfox PicoKVM of your own it writes a microSD card, paired with the hub. It also
+writes plain cards (no hub, no name) for spokes that go to someone else. See [docs/spoke.md](../docs/spoke.md#install)
+for using it.
 
 It's [Wails](https://wails.io): Go for the work, a web page for the window (`frontend/dist`, plain JavaScript, no
 build step).
 
 | Package | What it does |
 |---|---|
-| `internal/hubsetup` | Finds the hub (ports 8080 to 8099), runs the hub's own install script (an embedded copy, kept the same as `hub/install` by a test) |
-| `internal/hubapi` | Signs in to the hub and registers each spoke (`POST /api/spokes`), or forgets it if its card isn't written |
+| `internal/hubsetup` | Finds the hub (ports 8080 to 8099), runs the hub's own install script (an embedded copy, kept the same as `hub/install` by a test) to install or remove it |
+| `internal/hubapi` | Signs in to the hub and registers each spoke (`POST /api/spokes`), or forgets it if its card isn't written; adopts a ready-to-go spoke the hub sees on its network, and names it |
 | `internal/cards` | Lists the cards to offer: removable SD or USB, 512 GB or less, never a system or APFS disk; on a Mac, opens one with an admin's password (macOS's `authopen`) |
 | `internal/image` | Unpacks the image (`.xz`, `.gz`), writes it with the spoke's settings in its block, partition table last |
 | `internal/flash` | Writes a card and reads it all back to check it |
