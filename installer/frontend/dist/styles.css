@@ -90,6 +90,17 @@ pre.log { max-height: 180px; overflow: auto; background: var(--ink); border: 1px
 
 .box { display: grid; grid-template-columns: 200px 1fr; gap: 24px; align-items: center; }
 .box svg { width: 200px; height: auto; }
+.box.wide { grid-template-columns: 230px 1fr; margin: 6px 0 4px; }
+.box.wide svg { width: 230px; }
+.how { margin: 0; padding-left: 20px; display: grid; gap: 8px; color: var(--smoke); }
+.how li::marker { color: var(--ember); font-weight: 700; }
+/* The box drawing (box.js): the card going in, and the slot it goes in */
+.boxart .card-in { animation: card-in 3.6s ease-in-out infinite; }
+@keyframes card-in { 0% { transform: translate(0, 26px); opacity: 0; } 12% { opacity: 1; }
+  55%, 85% { transform: translate(0, 0); opacity: 1; } 100% { transform: translate(0, 0); opacity: 0; } }
+.boxart .hint { animation: hint 1.8s ease-in-out infinite; }
+@keyframes hint { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .boxart .card-in, .boxart .hint { animation: none; } }
 .cards { display: grid; gap: 8px; margin: 14px 0; }
 .card { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--line);
   background: var(--char2); cursor: pointer; text-align: left; width: 100%; font-weight: 500; }

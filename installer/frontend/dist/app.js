@@ -180,17 +180,6 @@ function spokesAsk() {
 }
 
 // ---- 5. Is it the right box? ----
-const PICOKVM = `<svg viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The Luckfox PicoKVM, with its screen">
-  <rect x="22" y="30" width="156" height="150" rx="26" fill="#1c1c1e" stroke="#3a3a3d" stroke-width="2"/>
-  <rect x="22" y="22" width="156" height="150" rx="26" fill="#232325" stroke="#48484c" stroke-width="2"/>
-  <rect x="46" y="44" width="108" height="108" rx="12" fill="#0e0e0e" stroke="#2c2c2e" stroke-width="2"/>
-  <path d="M78 76 l9 5 -9 5z" fill="#fe5c09"/><text x="92" y="84" fill="#f2f2f3" font-family="Bricolage, sans-serif" font-size="9" font-weight="600">Auditorium</text>
-  <rect x="68" y="92" width="64" height="18" rx="9" fill="#ef4444"/><text x="100" y="105" fill="#fff" text-anchor="middle" font-family="Bricolage, sans-serif" font-size="10" font-weight="700">LIVE</text>
-  <circle cx="84" cy="130" r="7" stroke="#f2f2f3" stroke-width="1.5"/><circle cx="104" cy="130" r="7" stroke="#f2f2f3" stroke-width="1.5"/><circle cx="104" cy="130" r="3.5" fill="#ef4444"/>
-  <rect x="122" y="125" width="22" height="10" rx="5" stroke="#f2f2f3" stroke-width="1.5"/>
-  <rect x="178" y="70" width="6" height="16" rx="2" fill="#48484c"/><rect x="178" y="96" width="6" height="10" rx="2" fill="#48484c"/>
-</svg>`;
-
 function box() {
   rail(3);
   const have = h('input', { type: 'checkbox' });
@@ -199,12 +188,12 @@ function box() {
   const check = () => { next.disabled = !(have.checked && cards.checked); };
   have.addEventListener('change', check);
   cards.addEventListener('change', check);
-  const art = h('div'); art.innerHTML = PICOKVM;
+  const art = h('div', { html: boxArt() });
   page(
     h('h1', {}, 'Is this your box?'),
     h('div', { class: 'box' }, art.firstElementChild, h('div', {},
       h('p', { class: 'lead' }, 'TouchStream spokes run on one box: the ', h('b', {}, 'Luckfox PicoKVM'), ', the version with the ', h('b', {}, '1.54-inch screen'), ' on top.'),
-      h('p', { class: 'small' }, 'It’s a small black cube, about 2 inches across, with HDMI IN, Ethernet and USB-C on one side and a microSD slot on the other.'))),
+      h('p', { class: 'small' }, 'It’s a small black box, about 2 inches across, with HDMI IN, Ethernet and USB-C on one side, and a microSD slot with RESET and BOOT buttons on the other.'))),
     h('div', { class: 'panel' },
       h('label', { class: 'check' }, have, h('span', {}, 'I have a Luckfox PicoKVM with the screen, for each spoke')),
       h('label', { class: 'check' }, cards, h('span', {}, 'and a microSD card for each, 32 GB or more', h('div', { class: 'muted small' }, 'A “high endurance” card lasts longest. A card reader too, if this computer has no SD slot.')))),
@@ -343,12 +332,17 @@ async function write(c) {
     const result = await api.WriteCard(c, name);
     state.written[state.index] = { name, ...result };
     const last = state.index === state.names.length - 1;
+    const art = h('div', { html: boxArt({ screen: 'off', card: true }) });
     page(
       h('h1', {}, `${name}’s card is ready`),
       h('div', { class: 'panel' }, h('div', { class: 'row' }, h('span', { class: 'ok' }, '✓'),
         h('div', {}, h('b', {}, 'Written and checked'),
           h('div', { class: 'muted small' }, result.paired ? 'Paired with the hub: it shows up in the dashboard by itself.' : 'Adopt it in the dashboard, under Add spoke, when it’s on.')))),
-      h('p', {}, 'Take the card out. Unplug ', h('b', {}, `${name}’s`), ' box if it’s on, put the card in, then plug it back in: it starts from the card.'),
+      h('div', { class: 'box wide' }, art.firstElementChild, h('ol', { class: 'how' },
+        h('li', {}, 'Take the card out of this computer.'),
+        h('li', {}, 'Unplug ', h('b', {}, `${name}’s`), ' box, if it’s on.'),
+        h('li', {}, 'Put the card in the slot beside ', h('b', {}, 'RESET'), ' and ', h('b', {}, 'BOOT'), ', gold contacts first, all the way in.'),
+        h('li', {}, 'Plug the box back in. It starts from the card, puts TouchStream on the box, restarts, and keeps the card for its recordings: leave it in.'))),
       result.note && h('p', { class: 'small' }, result.note),
       h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => { if (last) done(); else { state.index += 1; card(); } } },
         last ? 'Finish' : `Next: ${state.names[state.index + 1]}’s card`)));
