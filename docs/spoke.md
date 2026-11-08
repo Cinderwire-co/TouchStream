@@ -90,3 +90,16 @@ The spoke keeps recording its own copy, and uploads it when the hub is back. Eac
 finished, so little is left to send at the end. The spoke looks after its card: it keeps 2 GB free by deleting the
 oldest recordings as new ones need the room, the ones the hub already has first. The one being recorded is never
 touched. At the default quality (8 Mbps), 48 GB holds about 12½ hours.
+
+## Updates
+
+A spoke runs the same version as its hub, and the hub brings it up to date: once the hub has a new version, it
+gives each spoke the matching one as soon as that spoke is idle (not live or recording, and nothing of its due
+within the hour). Its screen says **Updating** while it does, for a few seconds. With automatic updates off
+(Settings > General on the hub), each spoke waits for **Update** there.
+
+- Each update is signed with TouchStream's release key; a spoke installs nothing else.
+- It keeps the version before. A new one that can't reach the hub after three starts is put back, and the hub
+  shows that it didn't take; **Try again** there tries it again.
+- The box's own system (Linux, its drivers) doesn't change with updates: the spoke itself does.
+

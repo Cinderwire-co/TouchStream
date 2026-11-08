@@ -25,6 +25,7 @@ import (
 
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/config"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/direct"
+	"github.com/Cinderwire-co/TouchStream/spoke/internal/update"
 )
 
 const HeartbeatEvery = 3 * time.Second
@@ -49,6 +50,7 @@ type Desired struct {
 	Commands    []string `json:"commands"`
 	Framerate   string   `json:"framerate"`
 	TimeZone    string   `json:"time_zone"` // "": where the spoke finds itself to be
+	Update      *update.Offer `json:"update"` // a newer spoke, when the hub has one for it and it's idle
 	direct.Plan
 }
 

@@ -9,6 +9,7 @@
 //	touchstream-spoke splash [-fb DEV]                            the splash on the box's screen (at startup)
 //	touchstream-spoke install [-keep-card] [-bootloader]          from the installer's card onto the box itself
 //	touchstream-spoke card                                        make the installer's card, once it's done, one for recordings
+//	touchstream-spoke version                                     print the spoke's version (an update checks it runs)
 //
 // Copyright (c) 2025 Will Reeves and TouchStream Contributors
 // Licensed under the MIT License - see LICENSE file for details
@@ -45,8 +46,12 @@ import (
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/setup"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/share"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/spoke"
+	"github.com/Cinderwire-co/TouchStream/spoke/internal/update"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/uplink"
 )
+
+// trialFor is how long a spoke just updated has to reach its hub before it stops (to be tried again)
+const trialFor = 10 * time.Minute
 
 func main() {
 	log.SetFlags(0)
@@ -67,6 +72,10 @@ func main() {
 	bootloader := flags.Bool("bootloader", false, "install: the card's boot loader goes onto the box too")
 	screenWeb := flags.Bool("screen-web", false, "serve the screen on the network (/screen: see it and tap it), as the emulator does")
 	_ = flags.Parse(args)
+	if command == "version" {
+		fmt.Println(spoke.Version)
+		return
+	}
 	if command == "splash" { // (early in the box's startup: before its data partition's there)
 		if err := lcd.Show(*fb, screen.Splash("Starting…"), true); err != nil {
 			log.Fatal(err)
@@ -92,7 +101,7 @@ func main() {
 		} else if did != "" {
 			log.Print(did)
 		}
-		err = run(ctx, store, *data, *source, *address, strings.Fields(*capture), strings.Fields(*audio), *fb, *touch, *screenWeb)
+		err = run(ctx, stop, store, *data, *source, *address, strings.Fields(*capture), strings.Fields(*audio), *fb, *touch, *screenWeb)
 	case "pair":
 		if flags.NArg() != 2 {
 			log.Fatal("usage: touchstream-spoke pair HUB CODE")
@@ -135,7 +144,7 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, store *config.Store, data, source, address string, capture, audio []string, fb, touch string,
+func run(ctx context.Context, restart func(), store *config.Store, data, source, address string, capture, audio []string, fb, touch string,
 	screenWeb bool) error {
 	var src media.Source
 	var replay *media.Replay // the emulator's stand-in for the HDMI input
@@ -161,9 +170,23 @@ func run(ctx context.Context, store *config.Store, data, source, address string,
 
 	rec := &recorder.Recorder{Dir: filepath.Join(data, "recordings")}
 	s := &spoke.Spoke{Store: store, Source: src, Uplink: uplink.New(), Recorder: rec,
-		Uploader: &recorder.Uploader{Recorder: rec, Store: store}, Direct: direct.New(), Data: data}
+		Uploader: &recorder.Uploader{Recorder: rec, Store: store}, Direct: direct.New(), Data: data, Restart: restart}
 	s.Link = &hub.Link{Store: store, Status: s.Status, OnDesired: s.Apply}
 	log.Printf("TouchStream spoke %s, %s", spoke.Version, store.Get().DeviceName)
+	// Just updated: this version has to reach the hub, or it stops, and after three starts the box
+	// goes back to the one before (spoke/tools/touchstream-loop)
+	if update.Trying(data, spoke.Version) {
+		go func() {
+			select {
+			case <-ctx.Done():
+			case <-time.After(trialFor):
+				if update.Trying(data, spoke.Version) {
+					log.Printf("%s hasn't reached its hub in %s: stopping, to try again", spoke.Version, trialFor)
+					restart()
+				}
+			}
+		}()
+	}
 
 	var out media.Fanout
 	toUplink, toRecorder, toDirect := out.Subscribe(256), out.Subscribe(1024), out.Subscribe(256)

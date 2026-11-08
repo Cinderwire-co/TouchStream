@@ -41,5 +41,9 @@ Connect as many channels as you like. Each broadcast picks which ones it goes ou
   edited videos does.
 - **Deleting a broadcast that has aired** never deletes it on YouTube: that would delete the channel's video. Deleting
   one that hasn't aired removes it from YouTube too.
+- **Disconnecting a channel** (Settings > YouTube) deletes its sign-in from the hub and gives the hub's access back
+  to Google. You can also take it back yourself at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+- **Your channel's data stays on your hub.** It talks to Google directly; see the
+  [privacy policy](https://cinderwire.co/touchstream/privacy).
 - **A channel you can't connect** (someone else's, say): add its stream key to a spoke instead, with **Add stream
   key** on the spoke's page. It goes out whenever that spoke is live. The server address can be any RTMP(S) server.

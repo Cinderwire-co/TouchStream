@@ -1,0 +1,43 @@
+#!/bin/sh
+# TouchStream: keeps the spoke running (started by touchstream-start on the box). It runs the version
+# the hub last updated it to ($data/app/current), or the one built into the box's system if there's
+# none. A new version is on trial until it reaches its hub: if it's started three times without
+# getting there, the box goes back to the version before it, and notes the one that failed for the
+# hub to show. (See spoke/internal/update.)
+#
+#   touchstream-loop DATA [the spoke's flags...]
+#
+#   TOUCHSTREAM_BUILTIN   the built-in spoke's folder (default /usr/bin)
+#   TOUCHSTREAM_LOG       where its output goes (default: syslog, as logger -t touchstream)
+#
+# Copyright (c) 2025 Will Reeves and TouchStream Contributors
+# Licensed under the MIT License - see LICENSE file for details
+data=$1
+shift
+app=$data/app
+builtin=${TOUCHSTREAM_BUILTIN:-/usr/bin}
+log=${TOUCHSTREAM_LOG:-logger -t touchstream}
+while true; do
+    bin=$builtin
+    v=$(cat "$app/current" 2>/dev/null)
+    if [ -n "$v" ] && [ -x "$app/$v/touchstream-spoke" ]; then
+        bin=$app/$v
+        if [ -f "$bin/.trying" ]; then
+            n=$(( $(cat "$bin/.trying" 2>/dev/null || echo 0) + 1 ))
+            if [ "$n" -gt 3 ]; then
+                echo "Spoke $v didn't reach its hub in three starts: going back to the one before" | $log
+                echo "$v" > "$app/failed"
+                cat "$app/previous" > "$app/current" 2>/dev/null || rm -f "$app/current"
+                rm -f "$app/previous"
+                continue
+            fi
+            echo "$n" > "$bin/.trying"
+        fi
+    fi
+    if [ -x "$bin/touchstream-capture" ]; then
+        "$bin/touchstream-spoke" run -data "$data" -capture "$bin/touchstream-capture" "$@" 2>&1 | $log
+    else
+        "$bin/touchstream-spoke" run -data "$data" "$@" 2>&1 | $log
+    fi
+    sleep 2
+done

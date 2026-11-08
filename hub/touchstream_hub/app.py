@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
-from . import VERSION, agent_guide, auth, desktop, discovery, platforms, recordings, settings
+from . import VERSION, agent_guide, auth, desktop, discovery, platforms, recordings, settings, updates
 from .assistant import Assistant, AssistantError
 from .broadcasts import THUMBNAIL_MAX, THUMBNAIL_TYPES, Broadcasts
 from .db import Database
@@ -37,6 +37,7 @@ from .shorts import Shorts, sentences
 from .speedtest import SpeedTest
 from .transcribe import MODELS, Transcriber, remap, to_srt, to_txt, to_vtt
 from .youtube import YouTube, YouTubeError
+from .updates import UpdateError, Updates
 
 STATIC = Path(__file__).parent / 'static'
 ONLINE_FOR = 15            # seconds since a spoke's last heartbeat to count it online
@@ -67,6 +68,7 @@ class Hub:
     transcriber: Transcriber
     shorts: Shorts
     discovery: discovery.Discovery
+    updates: Updates
     http: httpx.AsyncClient
     pairing: dict         # code -> expiry time
     pair_failures: dict   # client ip -> [failure times]
@@ -110,6 +112,8 @@ async def lifespan(app):
     hub.discovery.start()
     hub.speedtest = SpeedTest(hub.db)
     hub.assistant = Assistant(hub.db)
+    hub.updates = Updates(hub.db)
+    hub.updates.start(busy=busy_with)
     hub.http = httpx.AsyncClient(timeout=10)
     hub.pairing, hub.pair_failures = {}, {}
     print(f"TouchStream Hub {VERSION} - data in {settings.DATA_DIR}")
@@ -289,7 +293,8 @@ def state(request: Request):
     return {'version': VERSION, 'setup_needed': not hub.db.get_setting('admin_password'), 'signed_in': signed,
             'local': is_local(request), 'platform': desktop.PLATFORM,
             # The assistant: on with an OpenRouter key; 'asked' once the key was offered at setup (or skipped)
-            **({'ai': {'enabled': hub.assistant.enabled(), 'asked': bool(hub.db.get_setting('ai_asked'))}} if signed else {})}
+            **({'ai': {'enabled': hub.assistant.enabled(), 'asked': bool(hub.db.get_setting('ai_asked'))},
+                'update': update_notice()} if signed else {})}
 
 
 @app.post('/api/setup')
@@ -321,6 +326,7 @@ def logout(response: Response):
 
 # ---- Dashboard ----
 def spoke_view(spoke):
+    online = bool(spoke['last_seen'] and time.time() - spoke['last_seen'] < ONLINE_FOR)
     path = f"{'spoke' if spoke['mode'] == 'live' else 'preview'}/{spoke['id']}"
     dests = []
     for d in hub.db.destinations(spoke['id']):
@@ -332,11 +338,11 @@ def spoke_view(spoke):
         'id': spoke['id'], 'name': spoke['name'], 'location': spoke['location'], 'mode': spoke['mode'],
         'bitrate_kbps': spoke['bitrate_kbps'], 'record_local': spoke['record_local'],
         'test_pattern': spoke['test_pattern'], 'framerate': spoke['framerate'], 'time_zone': spoke['time_zone'],
-        'online': bool(spoke['last_seen'] and time.time() - spoke['last_seen'] < ONLINE_FOR),
-        'last_seen': spoke['last_seen'], 'status': spoke['status'],
+        'online': online, 'last_seen': spoke['last_seen'], 'status': spoke['status'],
         'receiving': hub.mtx.ready(path) if spoke['mode'] != 'off' else False,
         'preview_path': path, 'destinations': dests,
         'obs_url': f"rtmp://<hub>:{settings.RTMP_PORT}/spoke/{spoke['id']}",
+        'update': hub.updates.spoke_view(spoke, online),
     }
 
 
@@ -612,7 +618,7 @@ def youtube_connect_poll(flow_id: str):
 
 @app.delete('/api/youtube/channels/{channel_row}', dependencies=[Depends(admin)])
 def youtube_disconnect(channel_row: int):
-    hub.db.run('DELETE FROM youtube_channels WHERE id = ?', channel_row)
+    hub.youtube.disconnect(channel_row)
     return {'ok': True}
 
 
@@ -1532,7 +1538,7 @@ def get_settings(request: Request):
     return {'public_host': hub.db.get_setting('public_host') or '',
             'detected_host': ip or (host if host not in ('localhost', *LOOPBACK) else ''),
             'srt_port': settings.SRT_PORT, 'rtmp_port': settings.RTMP_PORT, 'version': VERSION,
-            'data_dir': str(settings.DATA_DIR), 'password_from_env': bool(settings.ADMIN_PASSWORD),
+            'data_dir': str(settings.DATA_DIR), 'install': hub.updates.kind, 'password_from_env': bool(settings.ADMIN_PASSWORD),
             'recordings_folder': str(hub.library.root()), 'recordings_folder_default': str(settings.RECORDINGS_FOLDER),
             'local': is_local(request), 'platform': desktop.PLATFORM, 'docker': settings.IN_DOCKER,
             'transcription': {**hub.transcriber.options(), 'models': MODELS}}
@@ -1785,6 +1791,93 @@ async def hls(relative: str, request: Request):
                              background=BackgroundTask(upstream.aclose))
 
 
+# ---- Updates (updates.py) ----
+def busy_with():
+    """What would make updating now a bad idea: '' when nothing would. A broadcast live or due within the
+    hour, a spoke streaming, or work under way (renders, uploads to YouTube, transcripts)."""
+    now = time.time()
+    live = hub.db.one("SELECT title FROM events WHERE state = 'live' LIMIT 1")
+    if live:
+        return f"{live['title']} is live"
+    soon = hub.db.one("SELECT title FROM events WHERE state = 'scheduled' AND start_at < ? ORDER BY start_at LIMIT 1",
+                      now + updates.QUIET_FOR)
+    if soon:
+        return f"{soon['title']} starts within the hour"
+    if hub.db.one("SELECT id FROM spokes WHERE mode != 'off' AND removed_at IS NULL LIMIT 1"):
+        return 'a spoke is streaming'
+    if hub.db.one("SELECT id FROM edits WHERE status IN ('queued', 'rendering', 'publishing') LIMIT 1") or \
+            hub.db.one("SELECT id FROM shorts WHERE status IN ('queued', 'analyzing', 'rendering', 'publishing') LIMIT 1"):
+        return 'a video is being made or published'
+    if hub.db.one("SELECT event_id FROM transcripts WHERE status IN ('queued', 'running') LIMIT 1"):
+        return 'a transcript is being made'
+    return ''
+
+
+def spoke_idle(spoke, status):
+    """Whether a spoke can be updated now: not streaming or recording, and nothing of its due within the hour."""
+    if spoke['mode'] != 'off' or status.get('mode') not in (None, 'off') or status.get('recording') \
+            or status.get('direct') or status.get('uploading'):
+        return False
+    return not hub.db.one("SELECT id FROM events WHERE spoke_id = ? AND (state = 'live' OR (state = 'scheduled' "
+                          "AND start_at < ?)) LIMIT 1", spoke['id'], time.time() + updates.QUIET_FOR)
+
+
+def update_notice():
+    """For the banner on every page: an update to install by hand, one waiting, or one just done."""
+    info = hub.updates.info()
+    behind = [s['name'] for s in hub.db.spokes() if hub.updates.spoke_view(s, True)['state'] in ('available', 'failed')]
+    return {'version': info['version'], 'latest': info['latest'], 'available': info['available'], 'auto': info['auto'],
+            'can_update_self': info['can_update_self'], 'applying': info['applying'], 'requested': info['requested'],
+            'waiting_for': info['waiting_for'], 'updated': info['updated'], 'spokes_behind': behind}
+
+
+@app.get('/api/updates', dependencies=[Depends(admin)])
+def get_updates():
+    spokes = [{'id': s['id'], 'name': s['name'], 'online': v['online'], 'update': v['update']}
+              for s in hub.db.spokes() for v in [spoke_view(s)]]
+    return {**hub.updates.info(), 'spokes': spokes}
+
+
+@app.post('/api/updates/check', dependencies=[Depends(admin)])
+def check_updates():
+    hub.updates.check()
+    return get_updates()
+
+
+@app.put('/api/updates/auto', dependencies=[Depends(admin)])
+def set_updates_auto(auto: bool = Body(embed=True)):
+    hub.updates.set_auto(auto)
+    return get_updates()
+
+
+@app.post('/api/updates/apply', dependencies=[Depends(admin)])
+def apply_update():
+    """Update the hub now, or as soon as nothing's going on (then its spokes follow)."""
+    try:
+        hub.updates.request()
+    except UpdateError as e:
+        raise HTTPException(409, str(e))
+    return get_updates()
+
+
+@app.post('/api/spokes/{spoke_id}/update', dependencies=[Depends(admin)])
+def update_spoke(spoke_id: str):
+    """Bring a spoke up to the hub's version, as soon as it's idle."""
+    if not hub.db.spoke(spoke_id):
+        raise HTTPException(404, 'No such spoke')
+    hub.updates.request_spoke(spoke_id)
+    return get_updates()
+
+
+@app.get('/api/spoke/update/{version}')
+def spoke_update_file(version: str, spoke: dict = Depends(spoke_auth)):
+    """The spoke of the hub's version, for a spoke that was offered it."""
+    bundle = hub.updates.bundle() if version == hub.updates.version else None
+    if not bundle:
+        raise HTTPException(404, 'This hub has no spoke of that version')
+    return FileResponse(bundle['path'], media_type='application/gzip')
+
+
 # ---- Spoke API ----
 @app.post('/api/spoke/pair')
 def pair(request: Request, data: dict = Body()):
@@ -1824,6 +1917,7 @@ def heartbeat(request: Request, status: dict = Body(), spoke: dict = Depends(spo
             # For running on its own if the hub goes down
             'bitrate_kbps': spoke['bitrate_kbps'], 'record_local_pref': spoke['record_local'],
             'framerate': spoke['framerate'], 'time_zone': spoke['time_zone'],
+            'update': hub.updates.spoke_offer(spoke, status, spoke_idle(spoke, status)),
             **spoke_schedule(spoke)}
 
 

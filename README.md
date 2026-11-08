@@ -100,6 +100,7 @@ tools/dev up        # the hub from this checkout, a stand-in YouTube, and two em
 tools/dev status    # where they are, and the dev dashboard's password
 tools/dev firmware  # Luckfox's PicoKVM images, from the zips of their Google Drive folder
 tools/dev down
+tools/release 0.2.0 NOTES.md   # a release: builds it all, tags it and drafts it on GitHub (needs the release key)
 ```
 
 It needs uv, Go, Docker Desktop and FFmpeg, and keeps everything in `.dev/`. The dev hub has ports of its own

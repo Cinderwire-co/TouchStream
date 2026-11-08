@@ -99,7 +99,24 @@ Then open `http://<server>:8080`. Open UDP 8890 for spokes. Recordings are kept 
 To see them as files, mount a folder at `/data/Recordings` (see `docker-compose.yml`). On Linux,
 `network_mode: host` also lets the hub find spokes on its network.
 
-To update: `git pull && docker compose up -d --build`.
+To update: `git pull && docker compose up -d --build`, or with the published image, pull
+`ghcr.io/cinderwire-co/touchstream-hub:latest` and start it again (on Coolify, choose **Redeploy**).
+
+## Updates
+
+The hub looks for a new TouchStream release on GitHub every few hours. **Settings > General > Updates** shows the
+version you have, what's new, and each spoke's version.
+
+- **Install updates automatically** (on to begin with): the hub updates itself once nothing is live, due to go live
+  within the hour, or being worked on (a render, an upload to YouTube, a transcript). It runs its own install
+  script from the new release, the same as running it again by hand: settings and recordings stay, and the
+  dashboard reloads itself when it's back, a minute later. Then each spoke updates as soon as it's idle (see
+  [the spoke guide](spoke.md#updates)).
+- **Off**: a bar at the top of every page says when an update is ready. **Update now** installs it, straight away
+  or as soon as nothing is going on; **Later** hides it until the next one. Spokes wait for **Update** in Settings.
+- **In Docker or Coolify**, the hub can't replace itself: it tells you when there's a new image to pull. Its spokes
+  still update themselves.
+- `TOUCHSTREAM_UPDATES=off` turns all of it off.
 
 ## Ports
 

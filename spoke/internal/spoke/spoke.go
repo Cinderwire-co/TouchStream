@@ -23,10 +23,12 @@ import (
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/hub"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/media"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/recorder"
+	"github.com/Cinderwire-co/TouchStream/spoke/internal/update"
 	"github.com/Cinderwire-co/TouchStream/spoke/internal/uplink"
 )
 
-const Version = "0.1.0-dev"
+// Version is the spoke's: a release build sets it (tools/release, with -ldflags -X); a developer's says so.
+var Version = "0.1.0-dev"
 
 // Rates is the 1080p frame rates the PicoKVM can capture: the hub offers only these.
 var Rates = []string{"24", "25", "30", "50", "60"}
@@ -40,6 +42,7 @@ type Spoke struct {
 	Link     *hub.Link
 	Direct   *direct.Stream // straight to YouTube: with no hub, or when it's out of reach
 	Data     string         // where the hub's plan is kept for then
+	Restart  func()         // stops the spoke, for the box's start script to run it again (after an update)
 
 	mu         sync.Mutex
 	mode       string    // off, preview or live, as the hub asked (or as Go live did, with no hub)
@@ -53,6 +56,9 @@ type Spoke struct {
 	manual     time.Time // when Record was pressed on the device, while recording that way
 	recordedAt time.Time // when the current recording started
 	kept       []int     // the broadcasts in the schedule kept on the card, for the hub to show (nil: none yet)
+	updating   string    // the version being put on the box, while it is
+	progress   float64   // how much of it has arrived, 0 to 1
+	updateErr  string    // why the last update didn't go on
 	cpu        cpuSampler
 }
 
@@ -98,6 +104,16 @@ var ErrNoKeys = errors.New("add a stream key first")
 // Apply makes the spoke match what the hub asked for (nil: unpaired, so stop everything
 // except a recording started on the device).
 func (s *Spoke) Apply(d *hub.Desired) {
+	if d != nil && update.Trying(s.Data, Version) {
+		if ok, err := update.Confirm(s.Data, Version); ok {
+			log.Printf("Updated to %s: it reached its hub, so it stays", Version)
+		} else if err != nil {
+			log.Printf("Keeping the update: %v", err)
+		}
+	}
+	if d != nil && d.Update != nil && d.Update.Version != Version {
+		s.offered(*d.Update)
+	}
 	if d == nil {
 		d = &hub.Desired{Mode: "off"}
 	} else if err := direct.Save(s.Data, d.Plan); err != nil {
@@ -323,6 +339,7 @@ type State struct {
 	Manual     bool
 	IP         string
 	Uploading  string
+	Updating   string // the version going on the box, while it is
 }
 
 func (s *Spoke) State(ip string) State {
@@ -340,7 +357,7 @@ func (s *Spoke) State(ip string) State {
 		Uplink: up, LiveSince: s.liveSince, Pending: s.pending, Problem: problem,
 		Direct: s.Direct.Active(), DirectNow: s.Direct.State(), HubNow: s.Link.State(), Keys: len(c.Destinations),
 		Recording: s.Recorder.Recording(), RecordedAt: s.recordedAt, Manual: !s.manual.IsZero(),
-		IP: ip, Uploading: s.Uploader.Status(),
+		IP: ip, Uploading: s.Uploader.Status(), Updating: s.updating,
 	}
 }
 
@@ -350,9 +367,15 @@ func (s *Spoke) Status() map[string]any {
 	up, upErr := s.Uplink.State()
 	s.mu.Lock()
 	mode, kept := s.mode, s.kept
+	updating, progress, updateErr := s.updating, s.progress, s.updateErr
 	s.mu.Unlock()
+	var upd map[string]any
+	if updating != "" {
+		upd = map[string]any{"version": updating, "progress": progress}
+	}
 	status := map[string]any{
 		"schedule_kept": kept,
+		"update": upd, "update_error": nilIfEmpty(updateErr), "update_failed": nilIfEmpty(update.Failed(s.Data)),
 		"version":       Version, "model": "picokvm", "framerates": Rates, "signal": sig.Present,
 		"signal_label": nil, "signal_fps": nil, "stream_fps": nil, "framerate": nonEmpty(s.Store.Get().Framerate, "30"),
 		"source": nil, "test_pattern": false, "test_pattern_at": 0,
@@ -446,4 +469,39 @@ func (c *cpuSampler) percent() any {
 		return nil // the first sample has nothing to compare with
 	}
 	return float64(busy-prevBusy) * 100 / float64(total-prevTotal)
+}
+
+// offered takes an update the hub has for this spoke, unless it's busy: never while it's live or
+// recording (the hub only offers one when it's idle, but things change in three seconds).
+func (s *Spoke) offered(o update.Offer) {
+	s.mu.Lock()
+	busy := s.updating != "" || s.mode == "live" || s.mode == "preview" || s.ownLive || s.Direct.Active() || s.Recorder.Recording()
+	if !busy {
+		s.updating, s.progress, s.updateErr = o.Version, 0, ""
+	}
+	s.mu.Unlock()
+	if busy {
+		return
+	}
+	go func() {
+		c := s.Store.Get()
+		log.Printf("Updating to %s, from the hub", o.Version)
+		err := update.Install(context.Background(), o, s.Data, c.HubURL, hub.Auth(c), func(p float64) {
+			s.mu.Lock()
+			s.progress = p
+			s.mu.Unlock()
+		})
+		if err != nil {
+			log.Printf("The update to %s didn't go on: %v", o.Version, err)
+			s.mu.Lock()
+			s.updating, s.updateErr = "", err.Error()
+			s.mu.Unlock()
+			return
+		}
+		log.Printf("%s is on the box: starting it", o.Version)
+		s.Recorder.Stop()
+		if s.Restart != nil {
+			s.Restart()
+		}
+	}()
 }

@@ -9,6 +9,7 @@ import { AddSpokeModal, AllSpokesModal, HubAddressButton, SpokeCard, SpokePage }
 import { BroadcastPage, SchedulePage } from './js/schedule.js';
 import { AccessPrompt, SettingsPage } from './js/pages.js';
 import { EditorPage } from './js/editor.js';
+import { UpdateBanner } from './js/updates.js';
 import { TranscriptPage } from './js/transcript.js';
 
 function AuthScreen({ setup, done }) {
@@ -71,7 +72,7 @@ function SpokesPage() {
   </div>`;
 }
 
-function Shell({ onSignOut, ai }) {
+function Shell({ onSignOut, ai, version }) {
   const hash = useHash();
   const [, section, id, sub] = hash.split('/');
   const page = section || 'home';
@@ -83,7 +84,7 @@ function Shell({ onSignOut, ai }) {
     : page === 'edit' && id ? html`<${EditorPage} eventId=${id} tab=${sub} />`
     : page === 'transcript' && id ? html`<${TranscriptPage} eventId=${id} />`
     : page === 'shorts' && id ? html`<${EditorPage} eventId=${id} tab="shorts" />`
-    : page === 'settings' ? html`<${SettingsPage} />`
+    : page === 'settings' ? html`<${SettingsPage} section=${id} />`
     : page === 'spokes' ? html`<${SpokesPage} />`
     : html`<${HomePage} />`;
   return html`<div>
@@ -95,6 +96,7 @@ function Shell({ onSignOut, ai }) {
         <button class="btn ghost small" onClick=${onSignOut}>Sign out</button>
       </div>
     </header>
+    <${UpdateBanner} version=${version} />
     <main key=${page}>${content}</main>
     ${ai && ai.enabled && html`<${Assistant} />`}
     <${AccessPrompt} />
@@ -116,7 +118,7 @@ function App() {
   const screen = state.setup_needed ? html`<${AuthScreen} setup done=${refresh} />`
     : !state.signed_in ? html`<${AuthScreen} done=${refresh} />`
     : state.ai && !state.ai.asked ? html`<${AssistantSetup} done=${refresh} />`
-    : html`<${Shell} ai=${state.ai} onSignOut=${() => api('POST', '/api/logout').then(refresh)} />`;
+    : html`<${Shell} ai=${state.ai} version=${state.version} onSignOut=${() => api('POST', '/api/logout').then(refresh)} />`;
   return html`${screen}<${Dialogs} />`;
 }
 

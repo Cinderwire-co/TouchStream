@@ -25,6 +25,7 @@ COPY touchstream_hub ./touchstream_hub
 RUN pip install --no-cache-dir '.[transcribe]'
 
 ENV TOUCHSTREAM_DATA=/data \
+    TOUCHSTREAM_INSTALL=docker \
     TOUCHSTREAM_MEDIAMTX=/usr/local/bin/mediamtx \
     PYTHONUNBUFFERED=1
 VOLUME /data

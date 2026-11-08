@@ -38,6 +38,7 @@ const PATHS = {
   'mark-in': 'M10 5H6v14h4M14 12h6',
   'mark-out': 'M14 5h4v14h-4M4 12h6',
   fit: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
+  more: 'M5 11h2v2H5zM11 11h2v2h-2zM17 11h2v2h-2z',
 };
 export const Icon = ({ name, size = 18 }) => html`<svg width=${size} height=${size} viewBox="0 0 24 24" fill="none"
   stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -121,3 +122,12 @@ export function Preview({ spoke, large }) {
       st.source === 'slate' ? 'Holding screen' : 'Test pattern'}</span>`}
   </div>`;
 }
+
+// Menus (<details class="menu">) close when you click outside one, choose something in it, or press Escape
+const closeMenus = (keep) => document.querySelectorAll('details.menu[open]').forEach((d) => { if (d !== keep) d.open = false; });
+addEventListener('click', (e) => {
+  const menu = e.target.closest && e.target.closest('details.menu');
+  closeMenus(menu);
+  if (menu && e.target.closest('.menu-list a, .menu-list button')) menu.open = false;
+});
+addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenus(); });

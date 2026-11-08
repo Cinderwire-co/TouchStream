@@ -356,6 +356,10 @@ func (s *Screen) Render(now time.Time) *image.RGBA {
 	if held >= holdShown && held < holdFor { // the BOOT button held: counting down to setup
 		v = ask
 	}
+	if st := s.State(); st.Updating != "" { // nothing to tap while it's updating: it starts again in a moment
+		splashOn(img, "Updating to "+st.Updating+"…")
+		return img
+	}
 	switch v {
 	case ask:
 		s.renderAsk(img, s.State(), q, held)
@@ -377,11 +381,15 @@ func Splash(line string) *image.RGBA {
 	drawing.Lock()
 	defer drawing.Unlock()
 	img := image.NewRGBA(image.Rect(0, 0, Size, Size))
+	splashOn(img, line)
+	return img
+}
+
+func splashOn(img *image.RGBA, line string) {
 	draw.Draw(img, img.Bounds(), image.NewUniform(ink), image.Point{}, draw.Src)
 	draw.Draw(img, image.Rect(Size/2-32, 66, Size/2+32, 130), mark(64), image.Point{}, draw.Over)
 	text(img, title, "TouchStream", Size/2, 160, 0, ash)
 	text(img, small, line, Size/2, 184, 0, smoke)
-	return img
 }
 
 func (s *Screen) renderHome(img *image.RGBA, now time.Time) {

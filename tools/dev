@@ -100,7 +100,7 @@ start_hub() {
     free "$TOUCHSTREAM_MTX_API_PORT"; free "$TOUCHSTREAM_MTX_RTSP_PORT"; free "$TOUCHSTREAM_MTX_HLS_PORT"
     say "Starting the hub"
     TOUCHSTREAM_DATA="$DEV/hub" TOUCHSTREAM_RECORDINGS="$DEV/recordings" TOUCHSTREAM_MEDIAMTX="$DEV/bin/mediamtx" \
-        TOUCHSTREAM_KEEP_AWAKE=0 TOUCHSTREAM_GOOGLE_OAUTH_BASE="http://127.0.0.1:$YOUTUBE_PORT" \
+        TOUCHSTREAM_KEEP_AWAKE=0 TOUCHSTREAM_UPDATES=off TOUCHSTREAM_GOOGLE_OAUTH_BASE="http://127.0.0.1:$YOUTUBE_PORT" \
         TOUCHSTREAM_YOUTUBE_API_BASE="http://127.0.0.1:$YOUTUBE_PORT" \
         nohup "$DEV/venv/bin/touchstream-hub" >>"$DEV/logs/hub.log" 2>&1 &
     echo $! >"$DEV/hub.pid"
@@ -247,7 +247,7 @@ case "${1:-}" in
         [ -n "$lite" ] || die "First: tools/dev firmware (Luckfox's images)"
         "$SPOKE_DEV" build
         "$ROOT/spoke/capture/build"
-        version="$(sed -n 's/^const Version = "\(.*\)"/\1/p' "$ROOT/spoke/internal/spoke/spoke.go")"
+        version="$(sed -n 's/^var Version = "\(.*\)"/\1/p' "$ROOT/spoke/internal/spoke/spoke.go")"
         python3 -I "$ROOT/tools/picokvm_image.py" build "$lite" "$ROOT/spoke/build/touchstream-spoke" \
             "$DEV/picokvm/touchstream-spoke-picokvm-$version.img" --capture "$ROOT/spoke/build/touchstream-capture" \
             ${TOUCHSTREAM_SSH_KEY:+--ssh-key "$TOUCHSTREAM_SSH_KEY"} ${2:+"$2"}

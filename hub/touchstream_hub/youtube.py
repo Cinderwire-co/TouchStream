@@ -108,6 +108,19 @@ class YouTube:
                                  items[0]['id'], snippet['title'], thumb, refresh, access, expires, time.time())
         return {'id': row_id, 'title': snippet['title'], 'thumbnail': thumb}
 
+    def disconnect(self, row_id):
+        """Forget a channel, and ask Google to take back the hub's access to it (the same as removing
+        it at myaccount.google.com/permissions). The hub forgets it even if Google can't be reached."""
+        channel = self.channel(row_id)
+        if not channel:
+            return
+        if channel['refresh_token']:
+            try:
+                self.http.post(f'{OAUTH_BASE}/revoke', data={'token': channel['refresh_token']}, timeout=10)
+            except httpx.HTTPError:
+                pass
+        self.db.run('DELETE FROM youtube_channels WHERE id = ?', row_id)
+
     # ---- Authenticated API calls ----
     def _token(self, channel):
         if channel['access_token'] and channel['token_expires'] > time.time() + 60:

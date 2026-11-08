@@ -104,7 +104,7 @@ function RepeatRule({ rule, first, until, onChange, onUntil }) {
 }
 
 // ---- Connected channels ----
-function ConnectChannelModal({ onClose }) {
+export function ConnectChannelModal({ onClose }) {
   const [flow, setFlow] = useState(null);
   const [state, setState] = useState({ status: 'starting' });
   useEffect(() => {
@@ -142,7 +142,7 @@ export function ChannelsStrip({ channels, configured, refresh }) {
     ${configured
       ? html`<button class="btn ghost small" onClick=${() => setConnecting(true)}><${Icon} name="plus" size=${14} /> Connect channel</button>`
       : html`<span class="muted small grow">Optional. Without YouTube, every broadcast is still recorded here to download
-          and upload yourself.</span><a class="btn ghost small" href="#/settings">Set up YouTube</a>`}
+          and upload yourself.</span><a class="btn ghost small" href="#/settings/youtube">Set up YouTube</a>`}
     ${connecting && html`<${ConnectChannelModal} onClose=${() => { setConnecting(false); refresh(); }} />`}
   </div>`;
 }
@@ -387,8 +387,8 @@ const duration = (e) => {
 export function OtherRecordings({ items, spokes }) {
   if (!items.length) return null;
   const names = Object.fromEntries(spokes.map((s) => [s.id, s.name]));
-  return html`<div>
-    <h2 class="section-title">Other recordings</h2>
+  return html`<details class="more other-recordings">
+    <summary><h2 class="section-title">Other recordings · ${items.length}</h2></summary>
     <p class="muted small" style="margin-bottom:10px">Recordings that don't line up with a broadcast here (for example, older ones).</p>
     <div class="agenda">${items.map((c) => html`<div class="event ended">
       <div class="when"><b>${clock(c.start)}</b><span class="muted small">${dayLabel(c.start)}</span></div>
@@ -397,7 +397,7 @@ export function OtherRecordings({ items, spokes }) {
         <span class=${`chip ${c.source === 'spoke' ? 'ember' : ''}`}>${COPY_LABEL[c.source]}</span></div></div>
       <div class="actions"><${DownloadMenu} copies=${[c]} /></div>
     </div>`)}</div>
-  </div>`;
+  </details>`;
 }
 
 // ---- Agenda ----
@@ -451,6 +451,9 @@ function SpokeCopyChip({ event }) {
         : `${event.spoke_name} is offline: it gets its copy when it's back`}>Not on the spoke yet</span>`;
 }
 
+const transcriptState = (event) => !event.transcript ? '' : event.transcript.status === 'done' ? 'ready'
+  : event.transcript.status === 'failed' ? 'failed' : `${Math.round(event.transcript.progress * 100)}%`;
+
 function EventRow({ event, spoke, showSpoke, onEdit, refresh }) {
   useNow(15000);
   const errors = event.targets.filter((t) => t.error);
@@ -486,15 +489,18 @@ function EventRow({ event, spoke, showSpoke, onEdit, refresh }) {
         <${Icon} name="stop" size=${14} /> End</button>`}
       ${event.state === 'ended' && hasCopy && html`<a class="btn small" href=${`#/edit/${event.id}`}>
         <${Icon} name="scissors" size=${14} /> ${event.edits.length ? 'Edited' : 'Edit'}</a>`}
-      ${event.state === 'ended' && hasCopy && html`<a class="btn ghost small" href=${`#/transcript/${event.id}`}>${
-        !event.transcript ? 'Transcript' : event.transcript.status === 'done' ? 'Transcript ✓'
-        : event.transcript.status === 'failed' ? 'Transcript !' : `Transcribing ${Math.round(event.transcript.progress * 100)}%`}</a>`}
-      ${event.state === 'ended' && hasCopy && html`<a class="btn ghost small" href=${`#/edit/${event.id}/shorts`}>${
-        event.shorts ? `Shorts · ${event.shorts}` : 'Shorts'}</a>`}
       ${['live', 'ended'].includes(event.state) && html`<${DownloadMenu} copies=${event.recordings} edits=${event.edits} />`}
-      ${hubEnv.local && event.folder && html`<${IconButton} icon="folder" label=${revealLabel()} onClick=${() => reveal({ event_id: event.id })} />`}
       ${!['ended', 'live'].includes(event.state) && !event.adhoc && html`<${IconButton} icon="edit" label="Edit" onClick=${() => onEdit(event)} />`}
-      <${IconButton} icon="trash" label="Delete" onClick=${() => removeBroadcast(event, refresh).catch(toast)} />
+      ${event.state === 'ended'
+        ? html`<details class="menu"><summary class="icon-btn" aria-label="More" title="More"><${Icon} name="more" /></summary>
+          <div class="menu-list">
+            ${page && html`<a href=${page}>Open<span class="muted">its page</span></a>`}
+            ${hasCopy && html`<a href=${`#/transcript/${event.id}`}>Transcript<span class="muted">${transcriptState(event)}</span></a>`}
+            ${hasCopy && html`<a href=${`#/edit/${event.id}/shorts`}>Shorts<span class="muted">${event.shorts ? `${event.shorts} made` : ''}</span></a>`}
+            ${hubEnv.local && event.folder && html`<button type="button" onClick=${() => reveal({ event_id: event.id })}>${revealLabel()}</button>`}
+            <button type="button" class="danger" onClick=${() => removeBroadcast(event, refresh).catch(toast)}>Delete…</button>
+          </div></details>`
+        : html`<${IconButton} icon="trash" label="Delete" onClick=${() => removeBroadcast(event, refresh).catch(toast)} />`}
     </div>
   </div>`;
 }

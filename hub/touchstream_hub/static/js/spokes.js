@@ -17,8 +17,8 @@ export function HubAddressButton() {
   const copy = () => navigator.clipboard && navigator.clipboard.writeText(address)
     .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
   return html`<span class="select-wrap">
-    <button ref=${anchor} class="icon-btn" aria-label="This hub's address" title="This hub's address" aria-expanded=${open}
-      onClick=${() => setOpen(!open)}><${Icon} name="network" /></button>
+    <button ref=${anchor} class="btn ghost small" aria-label="This hub's address" title="This hub's address, for spokes and phones" aria-expanded=${open}
+      onClick=${() => setOpen(!open)}><${Icon} name="network" size=${15} /><span class="hide-narrow">Hub address</span></button>
     ${open && style && html`<div class="popover hub-pop" ref=${popover} style=${style}>
       <span class="eyebrow">This hub's address</span>
       <div class="copy"><code>${address || '…'}</code>
@@ -355,7 +355,12 @@ export function SpokePage({ id }) {
     ['Storage', st.storage ? `${bytes(st.storage.free)} free of ${bytes(st.storage.total)} · ${st.storage.recordings} recording${
       st.storage.recordings === 1 ? '' : 's'}` : '—'],
     ['Internet', st.speed && st.speed.at ? `↓ ${Math.round(st.speed.down_mbps)} ↑ ${Math.round(st.speed.up_mbps)} Mbps · ${ago(st.speed.at)}` : '—'],
-    ['Version', st.version || '—'],
+    ['Version', html`${st.version || '—'}${{
+      available: html` · <a href="#/settings/general">${(spoke.update || {}).hub_version} is ready</a>`,
+      updating: ` · updating to ${(spoke.update || {}).hub_version}…`,
+      restarting: ' · restarting…',
+      failed: html` · <a class="warn-text" href="#/settings/general">${(spoke.update || {}).hub_version} didn’t start</a>`,
+    }[(spoke.update || {}).state] || ''}`],
   ];
   return html`<div>
     <a class="crumb" href="#/spokes"><${Icon} name="back" size=${15} /> Spokes</a>

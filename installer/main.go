@@ -30,7 +30,7 @@ import (
 	"github.com/Cinderwire-co/TouchStream/installer/internal/image"
 )
 
-const Version = "0.1.0-dev"
+var Version = "0.1.0-dev" // a release build sets it (tools/release, with -ldflags -X)
 
 //go:embed all:frontend/dist
 var assets embed.FS

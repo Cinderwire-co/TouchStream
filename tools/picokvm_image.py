@@ -84,11 +84,11 @@ fi
 # $data/screen-web serves the screen on the network, to try things out (anyone on it could tap it)
 web=""
 [ -f "$data/screen-web" ] && web="-screen-web"
-while true; do
-    /usr/bin/touchstream-spoke run -data "$data" $web 2>&1 | logger -t touchstream
-    sleep 2
-done
+# Runs the spoke, the version the hub last updated it to or the box's own, and starts it again if it stops
+exec /usr/bin/touchstream-loop "$data" $web
 """
+# The loop that keeps the spoke running, and runs the version the hub updated it to (spoke/tools/touchstream-loop)
+LOOP = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'spoke', 'tools', 'touchstream-loop')).read()
 SPLASH = """#!/bin/sh
 # TouchStream: its splash on the box's screen from the start, until the spoke's up and draws its own
 case "$1" in
@@ -277,14 +277,15 @@ def add_spoke(system, spoke, work, capture=None):
         raise ValueError("Luckfox's launcher (RkLunch.sh) doesn't start their apps where it did: check it by hand")
     with open(lunch, 'w') as f:
         f.write(LAUNCH.sub('\n\t/usr/bin/touchstream-start &   # TouchStream, in place of Luckfox\'s apps\n', script, 1))
-    for name, script in (('touchstream-start', START), ('S00touchstream-splash', SPLASH)):
+    for name, script in (('touchstream-start', START), ('S00touchstream-splash', SPLASH), ('touchstream-loop', LOOP)):
         with open(os.path.join(work, name), 'w') as f:
             f.write(script)
     shutil.copy(spoke, os.path.join(work, 'touchstream-spoke'))
     commands = ['rm /oem/usr/bin/RkLunch.sh', 'write {w}/RkLunch.sh /oem/usr/bin/RkLunch.sh',
                 'write {w}/touchstream-spoke /usr/bin/touchstream-spoke', 'write {w}/touchstream-start /usr/bin/touchstream-start',
+                'write {w}/touchstream-loop /usr/bin/touchstream-loop',
                 'write {w}/S00touchstream-splash /etc/init.d/S00touchstream-splash']
-    files = ['/oem/usr/bin/RkLunch.sh', '/usr/bin/touchstream-spoke', '/usr/bin/touchstream-start',
+    files = ['/oem/usr/bin/RkLunch.sh', '/usr/bin/touchstream-spoke', '/usr/bin/touchstream-start', '/usr/bin/touchstream-loop',
              '/etc/init.d/S00touchstream-splash']
     if capture:
         shutil.copy(capture, os.path.join(work, 'touchstream-capture'))

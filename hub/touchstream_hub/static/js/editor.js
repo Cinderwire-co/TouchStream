@@ -304,7 +304,7 @@ function Properties({ edit, selected, change, live, remember, select, mediaById,
       <div class="field"><span>Brand</span><${Select} label="Brand" value=${edit.brand ? String(edit.brand) : ''}
         options=${[['', 'None'], ...brands.map((b) => [String(b.id), b.name])]} onChange=${(v) => setBrand(v ? Number(v) : null)} />
         <small class="muted">${brands.length ? 'Its intro and outro go on the timeline; its watermark goes over the recording.'
-          : html`Make one in${' '}<a href="#/settings">Settings · Brands</a>: an intro, an outro and a watermark.`}</small></div>
+          : html`Make one in${' '}<a href="#/settings/brands">Settings · Brands</a>: an intro, an outro and a watermark.`}</small></div>
       <p class="muted small">Click a clip, a cut, a title or the Color track to change it. Drag the round handles at the ends
         of the video track for fades. B is the cut tool; T adds a title.</p>
     </div>`;
@@ -687,7 +687,7 @@ export function EditorPage({ eventId, tab: initialTab }) {
 
   if (!data) return null;
   const event = data.event;
-  const crumb = html`<a class="crumb" href="#/schedule"><${Icon} name="back" size=${15} /> Schedule</a>`;
+  const crumb = html`<a class="crumb" href=${`#/broadcast/${event.id}`}><${Icon} name="back" size=${15} /> ${event.title}</a>`;
   if (!data.copies.length) return html`<div>${crumb}
     <div class="empty">${event.recordings_removed_at
       ? html`<h2>The recordings were deleted</h2><p class="muted">They were older than Settings · Old recordings keeps.

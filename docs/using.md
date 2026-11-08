@@ -137,8 +137,19 @@ sent anywhere.
 
 ## Settings
 
-- **YouTube**: connect your channels ([how](youtube.md)).
-- **Assistant**: your OpenRouter key and model, or turn it off.
+Settings is in sections, chosen on the left (along the top on a phone):
+
+- **General**: updates for the hub and its spokes ([how they work](hub.md#updates)), the dashboard's password, and
+  this hub's version and data folder.
+- **YouTube**: your channels, and the Google OAuth client they sign in with ([how](youtube.md)).
+- **Recordings**: the folder, old recordings, and transcripts (below).
+- **Brands**: intros, outros and watermarks ([Brands](#brands)).
+- **Assistant and API**: your OpenRouter key and model, or turn it off; tokens for AI agents and scripts
+  ([API](api.md)).
+- **Network**: how spokes and other encoders reach the hub.
+
+In more detail:
+
 - **Recordings folder**: where each broadcast's folder goes.
 - **Old recordings**: delete recordings after a number of days, or to keep the folder under a size.
   - It deletes the oldest first, and shows what would go before saving.
