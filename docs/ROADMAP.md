@@ -190,12 +190,28 @@ Go live, End and Record, and recordings to phones by QR code. Still to come:
   - the assistant and AI agents running it, the API, and YouTube.
   - Start from the product-video templates in the ops repo.
 
+## The TouchStream app (an idea, 2026-11-07)
+
+TouchStream on a Mac or PC should feel like an app, not a website: the installer grows into **TouchStream.app**, which
+runs the hub in the background and opens the dashboard in its own window (no browser, no address or port to see), with
+a menu-bar or tray icon, notifications (live, ended, an update ready), the recordings as files you can drag out and
+open, and Add spoke writing the card right there. Phones and other computers still reach the dashboard on the network
+(Hub address). The installer is already Wails (Go and a web page), so the window and the files come from there.
+
+## Distribution
+
+- **YouTube sign-in built in**: ship Cinderwire's Google OAuth client with the hub, so Connect channel works without
+  making one (your own stays an option). Needs Google's verification to finish, a YouTube API quota increase (every
+  hub would share one project's daily quota), and the owner's OK to publish its client secret (normal for TV and
+  device sign-in clients, which Google doesn't treat as confidential).
+- **Signed installers**: the Mac one with the Developer ID and notarized (`installer/tools/release-mac`; needs a
+  notarytool keychain profile), the Windows one with a code-signing certificate (Microsoft's Trusted Signing, or an
+  OV certificate), so neither warns on first open. 0.1.0 shipped unsigned.
+
 ## Before release
 
 - Parts list with links: the PicoKVM (with its screen), a microSD card, a power supply, and a travel router for Wi-Fi.
 - No default passwords anywhere.
-- Ship the SIL Open Font License with the Bricolage Grotesque and JetBrains Mono fonts (in
-  `spoke/internal/assets/files`); the OFL requires it to travel with the fonts.
 - Make the GHCR image public.
 - Revisit the license (MIT for now; the goal is to keep the Cinderwire branding and stop rebranded forks).
 - Real-world tests: a real HDMI source and audio (including 50, 60 and 29.97 fps sources), a real YouTube channel, and the QR download on Android and iPhone.
