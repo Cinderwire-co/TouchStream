@@ -1,6 +1,6 @@
 [project]
 name = "touchstream-hub"
-version = "0.1.2"
+version = "0.1.3"
 description = "TouchStream hub: pair spokes, go live everywhere, keep every recording"
 readme = "README.md"
 license = "MIT"
