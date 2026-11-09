@@ -447,8 +447,8 @@ def _spoke_fields(changes, fields=('name', 'location', 'time_zone', *SPOKE_SHARE
     for field in fields:
         if field in changes:
             value = casts[field](changes[field])
-            if field == 'bitrate_kbps' and not 1000 <= value <= 25000:
-                raise HTTPException(400, 'Bitrate must be 1000-25000 kbps')
+            if field == 'bitrate_kbps' and not 1000 <= value <= 20000:   # (the box's encoder takes up to 20000)
+                raise HTTPException(400, 'Bitrate must be 1000-20000 kbps')
             if field == 'framerate' and value not in FRAME_RATES:
                 raise HTTPException(400, f"Frame rate must be one of {', '.join(FRAME_RATES)}")
             if field == 'time_zone' and value and value not in zoneinfo.available_timezones():

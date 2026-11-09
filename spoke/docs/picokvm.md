@@ -153,3 +153,29 @@ box's own ffmpeg 4.4:
    and sets ours, so the source reads it again.
 9. **Still to check**: touch at each corner, RTMPS straight to YouTube, the HDMI input's 1080p30 and other rates,
    and memory with everything running.
+
+## Bitrates, checked on the box (2026-11-09)
+
+Spoke 0.1.5 in preview to the Mac's hub over 100 Mbps Ethernet, a 1080p60 source from the Mac, 30 to 45 seconds
+a setting, measured at the hub (MediaMTX's byte count and SRT stats, and a copy from its HLS: frames, gaps, and a
+white flash and a beep every second). Scripts: a sweep through the hub's API and a pygame player, kept out of the
+repo.
+
+1. **The dashboard's bitrate never reached the encoder** (fixed after 0.1.5): the spoke kept the hub's frame rate
+   but not its bitrate, and the helper reads both from the spoke's settings, so every box encoded at 8000 kbps (or
+   what its own setup page set). Every run below is at 8000 kbps, whatever was asked.
+2. **At 8000 kbps the encoder spends what the picture needs, up to about the target**: a real service video
+   (4K stock, scaled) came out at 2.8 Mbps at 30 fps and 6.2 at 60; a slow pan over a still, 1.0 and 1.7; noise
+   that changes every frame (as hard as a picture gets), 9.0 and 17.5. So at 60 fps a very busy picture can send
+   twice the target: the encoder's QP stops at about 42 (slice QP, the same at every setting).
+3. **It kept up with all of it**: every frame arrived (no gaps but the restart when the frame rate changes), SRT
+   lost a handful of packets in a run at most, 60 to 64 °C at the hottest. CPU: 56 to 68% at 30 fps on real
+   pictures, 90% at 60, and 88 to 100% with noise (100% at 60 fps, still without a dropped frame).
+4. **Changing the frame rate makes the source reconnect**: the EDID changes (the rate goes first), so the hotplug
+   line drops and the Mac reads it again; its HDMI sound output is new then, and a player that had it open goes
+   silent (pygame did, until it was started again). A bitrate change at the same rate doesn't.
+5. **Sound against picture** (flash and beep, so the Mac's own sound delay is in it): at 30 fps, sound 66 to 83 ms
+   behind, steady over each run and across runs; at 60 fps, one run, 158 ms. The 60 fps difference is the box's
+   or ffmpeg's, and wants a closer look.
+6. **Still to check** once the bitrate reaches the encoder: that it follows 4, 6, 12, 16 and 20 Mbps, and the CPU
+   at 60 fps and 12 to 20 Mbps (with noise it's already at 100% at 17.5).

@@ -150,6 +150,11 @@ func (s *Spoke) Apply(d *hub.Desired) {
 		_ = s.Store.Update(func(c *config.Config) { c.Framerate = d.Framerate })
 		log.Printf("Frame rate set to 1080p%s", d.Framerate)
 	}
+	if d.BitrateKbps > 0 && d.BitrateKbps != s.Store.Get().BitrateKbps {
+		// The encoder reads it from here, as it does the frame rate (the plan's copy is for going direct)
+		_ = s.Store.Update(func(c *config.Config) { c.BitrateKbps = d.BitrateKbps })
+		log.Printf("Bitrate set to %d kbps", d.BitrateKbps)
+	}
 	s.mu.Lock()
 	if d.Mode == "live" && s.mode != "live" {
 		s.liveSince = time.Now()

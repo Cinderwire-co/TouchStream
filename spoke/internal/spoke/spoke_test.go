@@ -39,6 +39,19 @@ func TestARecordOnlyBroadcastIsRecordedWithoutTheHub(t *testing.T) {
 	}
 }
 
+func TestTheHubsQualityReachesTheEncoder(t *testing.T) {
+	s := paired(t)
+	d := &hub.Desired{Mode: "off", Framerate: "60", Plan: direct.Plan{BitrateKbps: 12000}}
+	s.Apply(d)
+	if c := s.Store.Get(); c.Framerate != "60" || c.BitrateKbps != 12000 {
+		t.Fatalf("framerate %q, bitrate %d: the encoder reads these", c.Framerate, c.BitrateKbps)
+	}
+	s.Apply(&hub.Desired{Mode: "off"}) // a hub that doesn't say leaves it as it was
+	if c := s.Store.Get(); c.BitrateKbps != 12000 {
+		t.Fatalf("bitrate %d after a heartbeat without one", c.BitrateKbps)
+	}
+}
+
 func TestADueBroadcastGoesStraightToYouTube(t *testing.T) {
 	s := paired(t)
 	now := time.Now()
