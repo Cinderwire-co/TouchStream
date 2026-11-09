@@ -36,7 +36,7 @@ from .series import WEEKS, Series, zone
 from .shorts import AVAILABLE as SHORTS_AVAILABLE, Shorts, sentences
 from .speedtest import SpeedTest
 from .transcribe import MODELS, Transcriber, remap, to_srt, to_txt, to_vtt
-from .youtube import YouTube, YouTubeError
+from .youtube import SHARED as SHARED_GOOGLE_CLIENT, YouTube, YouTubeError
 from .stats import Stats
 from .updates import UpdateError, Updates
 
@@ -587,9 +587,10 @@ def channel_picture(channel_row: int):
 
 @app.get('/api/youtube', dependencies=[Depends(admin)])
 def youtube_state():
-    client_id, _ = hub.youtube.client()
-    return {'configured': hub.youtube.configured(), 'from_env': hub.youtube.client_from_env(),
-            'client_id': client_id, 'channels': channel_list()}
+    """Channels, and the Google sign-in they use: TouchStream's (shared), your own (own), or the environment's."""
+    own = (hub.db.get_setting('youtube_client') or {}).get('client_id', '')
+    return {'configured': hub.youtube.configured(), 'from_env': hub.youtube.client_from_env(), 'uses': hub.youtube.which(),
+            'client_id': own, 'shared': SHARED_GOOGLE_CLIENT, 'channels': channel_list()}
 
 
 @app.put('/api/youtube/client', dependencies=[Depends(admin)])
@@ -604,10 +605,18 @@ def set_youtube_client(data: dict = Body()):
     return {'ok': True}
 
 
+@app.delete('/api/youtube/client', dependencies=[Depends(admin)])
+def remove_youtube_client():
+    """Back to TouchStream's own Google sign-in (channels connected with yours need connecting again)."""
+    hub.db.set_setting('youtube_client', {})
+    return {'ok': True}
+
+
 @app.post('/api/youtube/connect', dependencies=[Depends(admin)])
 def youtube_connect():
     if not hub.youtube.configured():
-        raise HTTPException(400, 'Add your Google OAuth client in Settings first')
+        raise HTTPException(400, 'TouchStream’s Google sign-in isn’t reachable right now (is the hub online?). '
+                                 'Try again in a few minutes, or add your own Google OAuth client in Settings > YouTube.')
     try:
         return hub.youtube.start_connect()
     except (YouTubeError, httpx.HTTPError) as e:

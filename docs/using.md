@@ -151,7 +151,7 @@ Settings is in sections, chosen on the left (along the top on a phone):
 
 - **General**: updates for the hub and its spokes ([how they work](hub.md#updates)), the dashboard's password, and
   this hub's version and data folder.
-- **YouTube**: your channels, and the Google OAuth client they sign in with ([how](youtube.md)).
+- **YouTube**: your channels (Connect channel: a code to enter at google.com/device), and, optionally, a Google OAuth client of your own ([how](youtube.md)).
 - **Recordings**: the folder, old recordings, and transcripts (below).
 - **Brands**: intros, outros and watermarks ([Brands](#brands)).
 - **Assistant and API**: your OpenRouter key and model, or turn it off; tokens for AI agents and scripts

@@ -242,6 +242,8 @@ MIGRATIONS = [
     ('transcripts', 'suggestions', 'TEXT'),
     # The brand the editor picks for this channel's broadcasts
     ('youtube_channels', 'brand_id', 'INTEGER REFERENCES brands(id) ON DELETE SET NULL'),
+    # The OAuth client a channel was connected with (its tokens work only with it); NULL: the hub's first one
+    ('youtube_channels', 'client_id', 'TEXT'),
 ]
 
 
