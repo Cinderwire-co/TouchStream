@@ -543,6 +543,8 @@ class Editor:
                 if thumb and thumb.exists():
                     self.youtube.set_thumbnail(channel, video_id, thumb.read_bytes(),
                                                'image/png' if thumb.suffix == '.png' else 'image/jpeg')
+                elif brand_thumb := self.media.channel_thumbnail(channel_id):   # the channel's brand, without one of its own
+                    self.youtube.set_thumbnail(channel, video_id, *brand_thumb)
                 hidden = None
                 if request.get('hide_original') in ('private', 'unlisted') and originals.get(channel_id):
                     self.youtube.set_privacy(channel, originals[channel_id], request['hide_original'])

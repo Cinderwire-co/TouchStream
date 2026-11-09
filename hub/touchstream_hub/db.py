@@ -244,6 +244,8 @@ MIGRATIONS = [
     ('youtube_channels', 'brand_id', 'INTEGER REFERENCES brands(id) ON DELETE SET NULL'),
     # The OAuth client a channel was connected with (its tokens work only with it); NULL: the hub's first one
     ('youtube_channels', 'client_id', 'TEXT'),
+    # A brand's default thumbnail: its channels' broadcasts without one of their own get it on YouTube
+    ('brands', 'thumbnail', 'INTEGER REFERENCES media(id) ON DELETE SET NULL'),
 ]
 
 

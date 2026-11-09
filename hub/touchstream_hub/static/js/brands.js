@@ -55,12 +55,12 @@ function MediaPick({ label, value, media, kinds, onChange, onUploaded }) {
   return html`<div class="field"><span>${label}</span>
     <div class="row-tight"><div class="grow"><${Select} label=${label} value=${value ? String(value) : ''} options=${options}
       onChange=${(v) => onChange(v ? Number(v) : null)} /></div>
-      <${UploadButton} accept=${kinds.includes('video') ? 'video/*,image/*' : 'image/*'} label="Upload" done=${(m) => { onUploaded(m); onChange(m.id); }} /></div></div>`;
+      <${UploadButton} accept=${kinds.includes('video') ? 'video/*,image/*' : label.startsWith('Default thumbnail') ? 'image/jpeg,image/png' : 'image/*'} label="Upload" done=${(m) => { onUploaded(m); onChange(m.id); }} /></div></div>`;
 }
 
-function BrandModal({ brand, media, channels, onClose, onUploaded }) {
-  const [f, setF] = useState({ name: '', intro: null, outro: null, watermark: null, watermark_corner: 'bottom_right',
-    watermark_size: 12, watermark_opacity: 80, intro_seconds: 5, outro_seconds: 5, channel_ids: [], ...(brand || {}) });
+function BrandModal({ brand, seed, media, channels, onClose, onUploaded }) {
+  const [f, setF] = useState({ name: '', intro: null, outro: null, watermark: null, thumbnail: null, watermark_corner: 'bottom_right',
+    watermark_size: 12, watermark_opacity: 80, intro_seconds: 5, outro_seconds: 5, channel_ids: [], ...(seed || {}), ...(brand || {}) });
   const [error, setError] = useState('');
   const set = (patch) => setF({ ...f, ...patch });
   const kindOf = (id) => (media.find((m) => m.id === id) || {}).kind;
@@ -76,6 +76,10 @@ function BrandModal({ brand, media, channels, onClose, onUploaded }) {
     <form class="form" onSubmit=${save}>
       <label class="field"><span>Name</span><input type="text" maxlength="60" placeholder="Sunday services" value=${f.name}
         onInput=${(e) => set({ name: e.target.value })} /></label>
+      <${MediaPick} label="Default thumbnail (a JPG or PNG, 1280×720)" value=${f.thumbnail} media=${media} kinds=${['image']}
+        onChange=${(v) => set({ thumbnail: v })} onUploaded=${onUploaded} />
+      <p class="muted small" style="margin-top:-6px">Broadcasts and edited videos on this brand's channels that have no thumbnail of their own
+        get this one on YouTube.</p>
       <${MediaPick} label="Intro" value=${f.intro} media=${media} kinds=${['video', 'image']} onChange=${(v) => set({ intro: v })} onUploaded=${onUploaded} />
       ${kindOf(f.intro) === 'image' && html`<label class="field"><span>Show the intro image for (seconds)</span>
         <input type="number" min="1" max="30" value=${f.intro_seconds} onInput=${(e) => set({ intro_seconds: Number(e.target.value) })} /></label>`}
@@ -102,12 +106,21 @@ function BrandModal({ brand, media, channels, onClose, onUploaded }) {
 }
 
 /** Settings > Brands: as many as you like, one per channel or ministry. */
-export function BrandsSettings() {
+export function BrandsSettings({ forChannel = null }) {
   const [data, setData] = useState(null);
   const [channels, setChannels] = useState([]);
   const [editing, setEditing] = useState(null);   // a brand, or {} for a new one
   const load = () => api('GET', '/api/media').then(setData);
   useEffect(() => { load(); api('GET', '/api/youtube').then((y) => setChannels(y.channels || [])).catch(() => {}); }, []);
+  // From Connect channel (#/settings/brands/channel-<id>): that channel's brand, or a new one for it
+  const [seeded, setSeeded] = useState(false);
+  useEffect(() => {
+    if (seeded || !forChannel || !data || !channels.length) return;
+    const channel = channels.find((c) => c.id === forChannel);
+    const theirs = data.brands.find((b) => b.channel_ids.includes(forChannel));
+    if (channel) setEditing(theirs || { seed: { name: channel.title, channel_ids: [forChannel] } });
+    setSeeded(true);
+  }, [forChannel, data, channels, seeded]);
   if (!data) return null;
   const name = (id) => (data.media.find((m) => m.id === id) || {}).name;
   const remove = async (b) => (await confirmAction({ title: `Delete the brand "${b.name}"?`, confirm: 'Delete', danger: true,
@@ -116,18 +129,19 @@ export function BrandsSettings() {
   return html`<div class="panel">
     <div class="row-tight"><h2 class="grow">Brands</h2>
       <button class="btn small" onClick=${() => setEditing({})}><${Icon} name="plus" size=${14} /> New brand</button></div>
-    <p class="muted small">An intro, an outro and a watermark for a channel or ministry. Pick one in the editor and it puts the intro and
-      outro on the timeline and the watermark over the recording. Make as many as you like.</p>
+    <p class="muted small">How a channel or ministry looks: a default thumbnail for its broadcasts, and an intro, an outro and a watermark
+      for its edited videos (pick a brand in the editor and it puts the intro and outro on the timeline and the watermark over the
+      recording). Make as many as you like.</p>
     ${data.brands.length === 0 ? html`<p class="muted small">No brands yet.</p>` : html`<div class="brand-list">
       ${data.brands.map((b) => html`<div class="row">
         <div class="grow min0"><b>${b.name}</b>
-          <div class="muted small">${[b.intro && `Intro: ${name(b.intro)}`, b.outro && `Outro: ${name(b.outro)}`,
+          <div class="muted small">${[b.thumbnail && `Thumbnail: ${name(b.thumbnail)}`, b.intro && `Intro: ${name(b.intro)}`, b.outro && `Outro: ${name(b.outro)}`,
             b.watermark && `Watermark: ${name(b.watermark)}`].filter(Boolean).join(' · ') || 'Nothing added yet'}
             ${b.channel_ids.length ? ` · ${channels.filter((c) => b.channel_ids.includes(c.id)).map((c) => c.title).join(', ')}` : ''}</div></div>
         <button class="btn ghost small" onClick=${() => setEditing(b)}>Edit</button>
         <${IconButton} icon="trash" label="Delete" onClick=${() => remove(b)} />
       </div>`)}</div>`}
-    ${editing && html`<${BrandModal} brand=${editing.id ? editing : null} media=${data.media} channels=${channels}
+    ${editing && html`<${BrandModal} brand=${editing.id ? editing : null} seed=${editing.seed} media=${data.media} channels=${channels}
       onUploaded=${(m) => setData((d) => ({ ...d, media: [m, ...d.media] }))}
       onClose=${(saved) => { setEditing(null); if (saved) load(); }} />`}
   </div>`;

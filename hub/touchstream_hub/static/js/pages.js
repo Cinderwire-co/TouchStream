@@ -445,7 +445,7 @@ const SECTIONS = [
   ['network', 'Network', 'How spokes and encoders reach the hub'],
 ];
 
-export function SettingsPage({ section }) {
+export function SettingsPage({ section, sub }) {
   const [s, setS] = useState(null);
   useEffect(() => { api('GET', '/api/settings').then(setS); }, []);
   if (!s) return null;
@@ -456,7 +456,7 @@ export function SettingsPage({ section }) {
     youtube: html`<${YouTubeSettings} />`,
     recordings: html`<${RecordingsFolder} s=${s} saved=${saved} /><${OldRecordings} saved=${saved} />
       <${TranscriptionSettings} options=${s.transcription} saved=${saved} /><${AutoShorts} options=${s.shorts_auto} saved=${saved} />`,
-    brands: html`<${BrandsSettings} />`,
+    brands: html`<${BrandsSettings} forChannel=${/^channel-\d+$/.test(sub || '') ? Number(sub.slice(8)) : null} />`,
     ai: html`<${AssistantSettings} changed=${() => dispatchEvent(new Event('ts-auth'))} /><${ApiAccess} />`,
     network: html`<${Network} s=${s} />`,
   }[key];

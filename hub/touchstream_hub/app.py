@@ -104,6 +104,7 @@ async def lifespan(app):
     hub.retention = Retention(hub.db, hub.library)
     hub.retention.start()
     hub.media = Media(hub.db)
+    hub.broadcasts.thumbnail_for = hub.media.channel_thumbnail   # a brand's default thumbnail
     hub.editor = Editor(hub.db, hub.youtube, hub.library, hub.media)
     hub.editor.start()
     hub.transcriber = Transcriber(hub.db, hub.library)

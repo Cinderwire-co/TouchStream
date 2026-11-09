@@ -7,6 +7,7 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 
 ## Done recently
 
+- Brands have a default thumbnail: broadcasts and edited videos on the brand's channels without one of their own get it on YouTube; connecting a channel offers to set up its brand. Editing a broadcast that's live, over, or past its start time now reaches YouTube (on its video: title, description, privacy, made for kids); removing a channel from an aired broadcast never deletes its YouTube video. docs/youtube.md says what changes on YouTube, and when.
 - Connecting YouTube needs nothing set up: hubs use TouchStream's own Google client, read from cinderwire.co (kept out of the repository, changeable without a release); your own client is an option in Settings, and each channel keeps the client it connected with.
 - Spokes that come ready to go: the installer asks where a spoke came from. One sold ready to go (TouchStream on it, its 32 GB card in) is found on the network, paired and named in the installer, with a code on the spoke's screen when the hub can't see the network; a PicoKVM of your own gets a card, as before. **Add spoke** in the dashboard asks for a name once a spoke is adopted or pairs with a code. Plain cards (no hub, no name) for spokes that go to someone else.
 - Removing the hub: the installer's **Remove the hub from this computer**, keeping its settings and recordings or moving them to the Trash (Recycle Bin) too; the scripts' `--uninstall --everything`.
@@ -103,6 +104,42 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 - Each transcript gets a short summary and chapter list, written by the assistant's model when one is set up.
 - Transcripts are split into passages and embedded. A local embedding model works offline; sqlite-vec keeps it all in the hub's one database.
 - One search box across all broadcasts. Results jump to the moment in the recording, and the editor opens there.
+
+## More platforms: Facebook, X and the rest (planning)
+
+Today a spoke can stream to any RTMP or RTMPS address with a stream key (**Add stream key** on a spoke), alongside
+YouTube, so a persistent Facebook, Twitch or Kick key already works by hand: it goes out whenever the spoke is live, with
+no scheduling, titles or numbers there. Doing for other platforms what TouchStream does for YouTube (making each
+broadcast, its title and thumbnail, live on time, views back in the hub) takes each platform's own API, and they differ a
+lot:
+
+| Platform | What it would take | How hard |
+|---|---|---|
+| **Facebook Pages** | Meta's Live Video API: a live video per broadcast on a Page, with a planned start time and an RTMPS address, title and description, then the numbers back. Needs a Meta app with Page permissions (pages_show_list, pages_read_engagement, pages_manage_posts, and publish_video for videos), Meta's app review (screencasts of each permission in use) and business verification, like Google's. Pages only: personal profiles can't be streamed to through the API, and Groups lost theirs. Facebook wants RTMPS. | A real project: the API fits TouchStream's model (scheduled lives, like YouTube's), the review is the long part |
+| **Twitch** | One persistent stream key per channel (it can be read through the API with the channel's permission, using a device sign-in like YouTube's), and the title and category set through the API before going live. No per-broadcast objects to make. | The easiest after YouTube |
+| **X (Twitter)** | Live video comes in over RTMP through X's Media Studio Producer (it needs X Premium); there's no public API for making broadcasts, so it stays a stream key you add by hand. | Stream key only, for now |
+| **LinkedIn Live** | Needs LinkedIn to approve the account for Live, and its API for partners; a custom-stream event per broadcast has its own RTMP address and key. | Hard to get access; by hand per event otherwise |
+| **Instagram, TikTok** | No public API for going live; desktop tools give a stream key per session (Instagram's change each time), so they can't be scheduled ahead. | Not possible to automate |
+| **Kick, Vimeo** | Stream keys today; Vimeo's paid plans have a live events API with RTMP. | Stream key; Vimeo later if asked |
+
+The work in TouchStream for any of them: a destination that's a connected account (like YouTube channels), the
+broadcast form offering it beside YouTube channels, a broadcast made on it when one is scheduled, its stream started with
+the spoke's video (the hub already sends one stream to several places), and its numbers in the broadcast's views. The
+hub's upload speed sets how many places it can send to at once: about 6 to 9 Mbps each at the spoke's quality.
+
+Suggested order: Facebook Pages first (most asked for by churches), then Twitch, with X, LinkedIn and Instagram as
+stream keys meanwhile.
+
+## YouTube: still to come
+
+- Edit an uploaded edit's or Short's title, description and thumbnail from the hub (the video-update call exists now).
+- Playlists: add a broadcast and its edit to a playlist chosen per series.
+- Scheduled publishing of edits (YouTube's publishAt), tags and category per series.
+- Upload an edit's captions to YouTube (captions.insert) instead of downloading them for YouTube Studio.
+- Latency changes after a broadcast is made: YouTube won't take them, so the hub would have to delete and make the
+  broadcast again (a new watch link): say so and offer it.
+- Live chat: YouTube's API can't turn it on or off, but can read it and moderate it (delete messages, ban users); a
+  chat panel on the broadcast's page, if asked for.
 
 ## Automatic edits (next, the user asked for it)
 

@@ -21,8 +21,9 @@ KINDS = {'video': ('.mp4', '.mov', '.m4v', '.webm', '.mkv'), 'image': ('.png', '
          'audio': ('.mp3', '.m4a', '.aac', '.wav', '.ogg', '.flac')}
 MAX_BYTES = 4 * 1024 ** 3
 CORNERS = ('top_left', 'top_right', 'bottom_left', 'bottom_right')
-BRAND_FIELDS = ('name', 'intro', 'outro', 'watermark', 'watermark_corner', 'watermark_size', 'watermark_opacity',
+BRAND_FIELDS = ('name', 'intro', 'outro', 'watermark', 'thumbnail', 'watermark_corner', 'watermark_size', 'watermark_opacity',
                 'intro_seconds', 'outro_seconds')
+THUMBNAIL_MAX = 2 * 1024 * 1024   # YouTube's limit for a thumbnail
 
 
 def folder():
@@ -137,14 +138,18 @@ class Media:
             fields['name'] = str(data.get('name') or '').strip()[:60]
             if not fields['name']:
                 raise ValueError('Give the brand a name')
-        for slot in ('intro', 'outro', 'watermark'):
+        for slot in ('intro', 'outro', 'watermark', 'thumbnail'):
             if slot in data:
                 media = self.get(int(data[slot])) if data[slot] else None
                 if data[slot] and not media:
                     raise ValueError(f'That {slot} file is gone')
                 if media and slot == 'watermark' and media['kind'] != 'image':
                     raise ValueError('The watermark needs to be an image (a PNG with a transparent background is best)')
-                if media and slot != 'watermark' and media['kind'] == 'audio':
+                if media and slot == 'thumbnail' and (media['kind'] != 'image' or Path(media['file']).suffix.lower() not in ('.jpg', '.jpeg', '.png')):
+                    raise ValueError('The thumbnail needs to be a JPG or PNG image (1280×720 is ideal)')
+                if media and slot == 'thumbnail' and (folder() / media['file']).stat().st_size > THUMBNAIL_MAX:
+                    raise ValueError('YouTube takes thumbnails up to 2 MB: use a smaller JPG')
+                if media and slot not in ('watermark', 'thumbnail') and media['kind'] == 'audio':
                     raise ValueError(f'The {slot} needs to be a video or an image')
                 fields[slot] = media['id'] if media else None
         if 'watermark_corner' in data:
@@ -162,6 +167,15 @@ class Media:
             for channel_id in data['channel_ids'] or []:
                 self.db.run('UPDATE youtube_channels SET brand_id = ? WHERE id = ?', brand_id, int(channel_id))
         return self.brand(brand_id)
+
+    def channel_thumbnail(self, channel_row_id):
+        """The default thumbnail of a channel's brand, as (bytes, content type), or None."""
+        row = self.db.one('SELECT m.file FROM youtube_channels c JOIN brands b ON b.id = c.brand_id '
+                          'JOIN media m ON m.id = b.thumbnail WHERE c.id = ?', channel_row_id)
+        path = folder() / row['file'] if row else None
+        if not path or not path.exists():
+            return None
+        return path.read_bytes(), 'image/png' if path.suffix.lower() == '.png' else 'image/jpeg'
 
     def delete_brand(self, brand_id):
         self.db.run('UPDATE youtube_channels SET brand_id = NULL WHERE brand_id = ?', brand_id)
