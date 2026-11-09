@@ -158,7 +158,7 @@ func (a *App) GetImage() (ImageState, error) {
 // PickImage writes a spoke image file from this computer instead (developer mode).
 func (a *App) PickImage() (ImageState, error) {
 	path, err := wails.OpenFileDialog(a.ctx, wails.OpenDialogOptions{Title: "The spoke's image",
-		Filters: []wails.FileFilter{{DisplayName: "Spoke images (*.img, *.img.xz, *.img.gz)", Pattern: "*.img;*.img.xz;*.img.gz;*.xz;*.gz"}}})
+		Filters: []wails.FileFilter{{DisplayName: "Spoke images (*.img, *.img.zst, *.img.xz, *.img.gz)", Pattern: "*.img;*.img.zst;*.img.xz;*.img.gz;*.zst;*.xz;*.gz"}}})
 	if err != nil || path == "" {
 		return ImageState{}, err
 	}
@@ -168,8 +168,8 @@ func (a *App) PickImage() (ImageState, error) {
 func (a *App) useImage(path, version string) (ImageState, error) {
 	wails.EventsEmit(a.ctx, "image:progress", map[string]any{"phase": "unpacking"})
 	plain := path
-	if strings.HasSuffix(path, ".xz") || strings.HasSuffix(path, ".gz") {
-		plain = filepath.Join(a.cache, strings.TrimSuffix(strings.TrimSuffix(filepath.Base(path), ".xz"), ".gz"))
+	if ext := filepath.Ext(path); ext == ".zst" || ext == ".xz" || ext == ".gz" {
+		plain = filepath.Join(a.cache, strings.TrimSuffix(filepath.Base(path), ext))
 	}
 	size, err := image.Unpack(path, plain)
 	if err != nil {
@@ -213,19 +213,22 @@ func latestImage(ctx context.Context) (asset, sum, version string, err error) {
 		for _, as := range r.Assets {
 			urls[as.Name] = as.URL
 		}
-		for name, url := range urls {
-			if r.Draft || !strings.HasPrefix(name, "touchstream-spoke-picokvm-") || !strings.HasSuffix(name, ".img.xz") {
-				continue
+		// The .zst where a release has one (it unpacks in seconds), else the .xz (minutes)
+		for _, ext := range []string{".img.zst", ".img.xz"} {
+			for name, url := range urls {
+				if r.Draft || !strings.HasPrefix(name, "touchstream-spoke-picokvm-") || !strings.HasSuffix(name, ext) {
+					continue
+				}
+				sumURL, ok := urls[name+".sha256"]
+				if !ok {
+					continue
+				}
+				s, err := getText(ctx, sumURL)
+				if err != nil {
+					return "", "", "", err
+				}
+				return url, strings.Fields(s + " x")[0], r.Tag, nil
 			}
-			sumURL, ok := urls[name+".sha256"]
-			if !ok {
-				continue
-			}
-			s, err := getText(ctx, sumURL)
-			if err != nil {
-				return "", "", "", err
-			}
-			return url, strings.Fields(s + " x")[0], r.Tag, nil
 		}
 	}
 	return "", "", "", errors.New("the spoke's software hasn't been released yet")

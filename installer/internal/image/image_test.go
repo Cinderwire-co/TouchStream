@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // card is a card in memory, recording the order of its writes.
@@ -97,6 +99,21 @@ func TestFindingTheBlock(t *testing.T) {
 		if got, err := HasBlock(bytes.NewReader(c.img)); err != nil || got != c.want {
 			t.Errorf("%s: %v, %v", name, got, err)
 		}
+	}
+}
+
+func TestUnpackingAZstdImage(t *testing.T) {
+	dir := t.TempDir()
+	img := fake(3<<20, 0)
+	w, _ := zstd.NewWriter(nil, zstd.WithWindowSize(1<<27))
+	src := filepath.Join(dir, "spoke.img.zst")
+	os.WriteFile(src, w.EncodeAll(img, nil), 0o644)
+	n, err := Unpack(src, filepath.Join(dir, "spoke.img"))
+	if err != nil || n != int64(len(img)) {
+		t.Fatalf("%d %v", n, err)
+	}
+	if out, _ := os.ReadFile(filepath.Join(dir, "spoke.img")); !bytes.Equal(out, img) {
+		t.Fatal("unpacked differently")
 	}
 }
 

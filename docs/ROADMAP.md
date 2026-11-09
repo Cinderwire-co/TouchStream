@@ -7,6 +7,8 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 
 ## Done recently
 
+- The installer gets the spoke's card image ready in seconds: releases have it as zstd too (`.img.zst`, no bigger), which Go unpacks about fifteen times faster than the `.xz` (5.7 s against 86 s for the 1.4 GB image on an M-series Mac; minutes on a slower PC).
+- Audio only: a broadcast's Download menu has just its sound (or its edit's) as an MP3, made as it downloads, for a podcast or the website.
 - Brands reach titles and Shorts: a brand's title color is used for its lower thirds, titles and corner tags (in the editor's preview and the render), and Shorts get the brand's watermark at the top (the channel's brand by default; the Shorts tab can pick another, or none).
 - Brands have a default thumbnail: broadcasts and edited videos on the brand's channels without one of their own get it on YouTube; connecting a channel offers to set up its brand. Editing a broadcast that's live, over, or past its start time now reaches YouTube (on its video: title, description, privacy, made for kids); removing a channel from an aired broadcast never deletes its YouTube video. docs/youtube.md says what changes on YouTube, and when.
 - Connecting YouTube needs nothing set up: hubs use TouchStream's own Google client, read from cinderwire.co (kept out of the repository, changeable without a release); your own client is an option in Settings, and each channel keeps the client it connected with.
@@ -194,7 +196,8 @@ Go live, End and Record, and recordings to phones by QR code. Still to come:
   lanes: the factory eMMC system's 2 can't carry 1080p60). This replaces Luckfox's software on the eMMC; their USB
   flashing tool and eMMC image (in `.dev/picokvm/eMMC`) put it back.
 - **The image the installer writes**: built with Luckfox's Buildroot SDK, with the spoke and ffmpeg, released on
-  GitHub as `touchstream-spoke-picokvm-VERSION.img.xz` with a `.sha256` beside it. It needs a 64 KiB block for the
+  GitHub as `touchstream-spoke-picokvm-VERSION.img.zst` (the installer's: zstd, which it unpacks in seconds) and `.img.xz`
+  (for writing a card by hand), each with a `.sha256` beside it. It needs a 64 KiB block for the
   installer to fill in: at a 64 KiB boundary in the image's first 64 MiB, starting `TOUCHSTREAM-PROVISION-V1` and a
   newline, then zeros. The installer writes the hub's address and the spoke's credentials there, and the spoke reads
   them at its first start (`spoke/internal/provision`, from `/dev/mmcblk1`, the card). It's made from Luckfox's own

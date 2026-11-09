@@ -22,6 +22,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/ulikunitz/xz"
 )
 
@@ -70,8 +71,10 @@ func Parse(block []byte) (*Provision, error) {
 	return &p, nil
 }
 
-// Unpack makes a plain image from path (decompressing .gz or .xz) at dst, once: writing several
-// cards then reads it straight off the disk. It returns the image's size.
+// Unpack makes a plain image from path (decompressing .zst, .xz or .gz) at dst, once: writing several
+// cards then reads it straight off the disk. It returns the image's size. Releases have a .zst for
+// the installer: Go unpacks it about fifteen times faster than the .xz (seconds, not minutes, for
+// the spoke's 1.4 GB), and it's no bigger.
 func Unpack(path, dst string) (int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -85,6 +88,14 @@ func Unpack(path, dst string) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+		src = z
+	case strings.HasSuffix(path, ".zst"):
+		// (the release's is made with zstd --long=27: a window of 128 MiB)
+		z, err := zstd.NewReader(f, zstd.WithDecoderMaxWindow(1<<28))
+		if err != nil {
+			return 0, err
+		}
+		defer z.Close()
 		src = z
 	case strings.HasSuffix(path, ".xz"):
 		z, err := xz.NewReader(f)

@@ -8,12 +8,14 @@
 # A release is:
 #   touchstream-spoke-V-picokvm.tar.gz    the spoke and its capture helper: what a hub gives its spokes to update
 #   touchstream-spoke-V-picokvm.json      its SHA-256 and signature, by TouchStream's release key
-#   touchstream-spoke-picokvm-V.img.xz    the card image the installer writes (+ .sha256)
+#   touchstream-spoke-picokvm-V.img.zst   the card image the installer writes (+ .sha256): zstd, which it unpacks in
+#                                         seconds (the .xz takes it minutes)
+#   touchstream-spoke-picokvm-V.img.xz    the same, for writing a card by hand (+ .sha256)
 #   TouchStream-Installer-Mac.zip, TouchStream-Installer-Windows.exe
 # Hubs update from the tag's source (hub/install/*); GitHub builds the hub's Docker image (hub-image.yml).
 # Hubs only see a release once it's published, so a draft can be tested by hand first.
 #
-# It needs Go, Docker (the capture helper), the Wails CLI, gh (signed in), Luckfox's images
+# It needs Go, Docker (the capture helper), the Wails CLI, zstd, gh (signed in), Luckfox's images
 # (tools/dev firmware) and the release key, ~/.config/touchstream/release-signing.key (or
 # TOUCHSTREAM_RELEASE_KEY), which never goes in this repository: keep a backup of it somewhere safe,
 # since every spoke out there trusts only it. Run it on main with nothing uncommitted.
@@ -26,6 +28,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KEY="${TOUCHSTREAM_RELEASE_KEY:-$HOME/.config/touchstream/release-signing.key}"
 WAILS="$(command -v wails || echo "$HOME/go/bin/wails")"
+command -v zstd >/dev/null || { echo "Error: zstd first (brew install zstd)" >&2; exit 1; }
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 
@@ -73,7 +76,10 @@ lite="$(find "$ROOT/.dev/picokvm/Lite" -name '*.img' 2>/dev/null | head -1)"
 [ -n "$lite" ] || die "Luckfox's images first: tools/dev firmware"
 python3 -I "$ROOT/tools/picokvm_image.py" build "$lite" "$OUT/touchstream-spoke" "$OUT/touchstream-spoke-picokvm-$V.img" \
     --capture "$OUT/touchstream-capture" --xz
-rm -f "$OUT/touchstream-spoke-picokvm-$V.img" "$OUT/touchstream-spoke-picokvm-$V.img.sha256"
+img="touchstream-spoke-picokvm-$V.img"
+zstd -19 --long=27 -T0 -q -f "$OUT/$img" -o "$OUT/$img.zst"      # (the installer allows a window this big)
+(cd "$OUT" && shasum -a 256 "$img.zst" > "$img.zst.sha256")
+rm -f "$OUT/$img" "$OUT/$img.sha256"
 
 # ---- The installer ----
 say "Building the installer"
@@ -98,6 +104,6 @@ git -C "$ROOT" tag -a "v$V" -m "TouchStream $V"
 say "Pushing main and v$V"
 git -C "$ROOT" push -q origin main "v$V"
 gh release create "v$V" --repo Cinderwire-co/TouchStream --draft --title "TouchStream $V" --notes-file "$NOTES" \
-    "$OUT"/touchstream-spoke-"$V"-picokvm.{tar.gz,json} "$OUT"/touchstream-spoke-picokvm-"$V".img.xz{,.sha256} \
+    "$OUT"/touchstream-spoke-"$V"-picokvm.{tar.gz,json} "$OUT"/touchstream-spoke-picokvm-"$V".img.{zst,xz}{,.sha256} \
     "$OUT"/TouchStream-Installer-{Mac.zip,Windows.exe}
 say "Drafted: https://github.com/Cinderwire-co/TouchStream/releases (publish it there when it looks right)"
