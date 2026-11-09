@@ -115,6 +115,9 @@ export function ShortsTab({ eventId, data, source, range, picked, pick, preview,
   const length = moment ? moment[1] - moment[0] : 0;
   const tooLong = length > options.max_length + 0.5;
   const set = (patch) => setLook({ ...look, ...patch });
+  // The watermark: the channel's brand until another (or none) is picked
+  const branded = data.brands.filter((b) => b.watermark);
+  const brandId = look.brand === undefined ? (data.channel_brand || null) : look.brand;
   const firstWords = () => {
     const s = moment && (data.sentences || []).find((x) => x.end > moment[0] + 0.2);
     const words = s ? s.text.replace(/[.?!,]+$/, '').split(/\s+/) : [];
@@ -127,7 +130,7 @@ export function ShortsTab({ eventId, data, source, range, picked, pick, preview,
   };
   const make = async () => {
     setError('');
-    const body = { ...look, title: title || firstWords(), source: source.path, start: moment[0], end: moment[1] };
+    const body = { ...look, brand: brandId, title: title || firstWords(), source: source.path, start: moment[0], end: moment[1] };
     try {
       if (changing) await api('PUT', `/api/shorts/${changing.id}`, body);
       else await api('POST', `/api/events/${eventId}/shorts`, body);
@@ -137,7 +140,8 @@ export function ShortsTab({ eventId, data, source, range, picked, pick, preview,
   };
   const change = (short) => {
     setChanging(short); setTitle(short.title);
-    setLook({ framing: short.spec.framing, style: short.spec.style, accent: short.spec.accent, trim_pauses: short.spec.trim_pauses });
+    setLook({ framing: short.spec.framing, style: short.spec.style, accent: short.spec.accent, trim_pauses: short.spec.trim_pauses,
+      brand: short.spec.brand || null });
     pick({ start: short.spec.start, end: short.spec.end, title: short.title, made: true });
   };
   const suggestions = (data.suggestions && data.suggestions.moments) || [];
@@ -188,6 +192,9 @@ export function ShortsTab({ eventId, data, source, range, picked, pick, preview,
           ${options.accents.map(([name, color]) => html`<button type="button" class=${look.accent === name ? 'on' : ''}
             style=${`--swatch:${color}`} title=${name} aria-label=${name} onClick=${() => set({ accent: name })}></button>`)}</div>`}
       </div>`}
+      ${branded.length > 0 && html`<div class="field"><span>Watermark</span><${Select} label="Watermark" value=${brandId ? String(brandId) : ''}
+        options=${[['', 'None'], ...branded.map((b) => [String(b.id), b.name])]} onChange=${(v) => set({ brand: v ? Number(v) : null })} />
+        <small class="muted">The brand's logo at the top of the short.</small></div>`}
       <label class="inline-switch"><${Switch} checked=${look.trim_pauses} label="Take out pauses"
         onChange=${(v) => set({ trim_pauses: v })} /> Take out pauses</label>
       <label class="field"><span>Title</span><input type="text" maxlength="100" placeholder=${moment ? firstWords() : 'Named from its first words'}

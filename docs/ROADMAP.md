@@ -7,6 +7,7 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 
 ## Done recently
 
+- Brands reach titles and Shorts: a brand's title color is used for its lower thirds, titles and corner tags (in the editor's preview and the render), and Shorts get the brand's watermark at the top (the channel's brand by default; the Shorts tab can pick another, or none).
 - Brands have a default thumbnail: broadcasts and edited videos on the brand's channels without one of their own get it on YouTube; connecting a channel offers to set up its brand. Editing a broadcast that's live, over, or past its start time now reaches YouTube (on its video: title, description, privacy, made for kids); removing a channel from an aired broadcast never deletes its YouTube video. docs/youtube.md says what changes on YouTube, and when.
 - Connecting YouTube needs nothing set up: hubs use TouchStream's own Google client, read from cinderwire.co (kept out of the repository, changeable without a release); your own client is an option in Settings, and each channel keeps the client it connected with.
 - Spokes that come ready to go: the installer asks where a spoke came from. One sold ready to go (TouchStream on it, its 32 GB card in) is found on the network, paired and named in the installer, with a code on the spoke's screen when the hub can't see the network; a PicoKVM of your own gets a card, as before. **Add spoke** in the dashboard asks for a name once a spoke is adopted or pairs with a code. Plain cards (no hub, no name) for spokes that go to someone else.
@@ -154,7 +155,7 @@ private or unlisted if wanted.
 - Drag media from the library straight onto the timeline; volume for each sound clip; music that ducks under speech.
 - A second video track for picture-in-picture and logos that come and go; keyframes for moves and zooms.
 - Transitions previewed in the browser (today: dips show, dissolves and wipes show as a plain cut until rendered).
-- Brands with their own title colors and font, and brands on shorts (watermark, end card).
+- Brands with their own font for titles, and an end card on shorts (the outro, made vertical).
 - Export presets (1080p, 720p for smaller uploads, audio only for podcasts).
 
 ## The spoke: still to come

@@ -41,7 +41,7 @@ const colorName = (c) => {
 const cssFilter = (c) => [`brightness(${1 + c.brightness / 160})`, `contrast(${1 + c.contrast / 200})`,
   `saturate(${Math.max(0, 1 + c.saturation / 100)})`, c.warmth > 0 ? `sepia(${c.warmth / 250})` : '',
   c.warmth < 0 ? `hue-rotate(${c.warmth / 6}deg)` : ''].join(' ');
-const titleImage = (t) => `/api/titles/preview.png?${new URLSearchParams({ style: t.style, text: t.text, sub: t.sub || '' })}`;
+const titleImage = (t, accent) => `/api/titles/preview.png?${new URLSearchParams({ style: t.style, text: t.text, sub: t.sub || '', ...(accent ? { accent } : {}) })}`;
 
 const HIDE = [['private', 'Make it private'], ['unlisted', 'Make it unlisted'], ['keep', 'Leave it as it is']];
 
@@ -59,8 +59,8 @@ function PublishModal({ edit, event, channels, onClose }) {
   };
   return html`<${Modal} title="Publish to YouTube" onClose=${onClose}>
     <form class="form" onSubmit=${submit}>
-      <p class="muted small">Uploads the edited video as a new YouTube video, with the broadcast's thumbnail. YouTube
-        allows about 6 uploads a day per Google project.</p>
+      <p class="muted small">Uploads the edited video as a new YouTube video, with the broadcast's thumbnail (or, without
+        one, the channel's brand thumbnail). YouTube allows about 6 uploads a day per Google project.</p>
       <label class="field"><span>Title</span><input type="text" maxlength="100" value=${f.title} onInput=${(e) => setF({ ...f, title: e.target.value })} /></label>
       <label class="field"><span>Description</span><textarea rows="3" value=${f.description} onInput=${(e) => setF({ ...f, description: e.target.value })}></textarea></label>
       <div class="field"><span>Channels</span>
@@ -232,7 +232,7 @@ function Viewer({ player, edit, mediaById, brand, guide }) {
     <audio ref=${player.sound} preload="auto"></audio><audio ref=${player.music} preload="auto"></audio>
     ${fromRecording && wm && html`<img class="watermark" alt="" src=${`/api/media/${wm.id}/file`}
       style=${`${corner};width:${brand.watermark_size}%;opacity:${brand.watermark_opacity / 100}`} />`}
-    ${showing.map((x) => html`<img class="title-overlay" key=${x.id} src=${titleImage(x)} alt="" />`)}
+    ${showing.map((x) => html`<img class="title-overlay" key=${x.id} src=${titleImage(x, brand && brand.title_color)} alt="" />`)}
     <div class="fade-overlay" style=${`opacity:${shade};background:${white ? '#fff' : '#000'}`}></div>
     ${guide && html`<${Guide} guide=${guide} at=${src ? src.at : M.recordingAt(edit, t)} />`}
     ${src && html`<span class="badge chip ember right">From the recording</span>`}

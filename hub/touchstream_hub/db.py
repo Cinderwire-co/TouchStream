@@ -246,6 +246,8 @@ MIGRATIONS = [
     ('youtube_channels', 'client_id', 'TEXT'),
     # A brand's default thumbnail: its channels' broadcasts without one of their own get it on YouTube
     ('brands', 'thumbnail', 'INTEGER REFERENCES media(id) ON DELETE SET NULL'),
+    # A brand's color for titles ('#RRGGBB'); NULL: TouchStream's ember
+    ('brands', 'title_color', 'TEXT'),
 ]
 
 

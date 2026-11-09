@@ -1,4 +1,5 @@
-"""A brand's default thumbnail: a JPG or PNG under 2 MB, and the one a channel's broadcasts get when they have none"""
+"""A brand's default thumbnail (a JPG or PNG under 2 MB, the one a channel's broadcasts get when they have none),
+and its title color"""
 import shutil
 import tempfile
 import time
@@ -95,6 +96,26 @@ class BrandThumbnail(unittest.TestCase):
 
     def test_no_brand_no_thumbnail(self):
         self.assertIsNone(self.media.channel_thumbnail(self.channel))
+
+    def test_title_color_is_a_hex_color_or_none(self):
+        brand = self.media.save_brand(None, {'name': 'Sunday', 'title_color': '#2f6b4f'})
+        self.assertEqual(brand['title_color'], '#2F6B4F')
+        with self.assertRaisesRegex(ValueError, 'title color'):
+            self.media.save_brand(brand['id'], {'title_color': 'green'})
+        self.assertIsNone(self.media.save_brand(brand['id'], {'title_color': ''})['title_color'])
+
+
+class TitleColor(unittest.TestCase):
+    def test_titles_take_the_brands_color(self):
+        try:
+            from touchstream_hub import titles
+        except ImportError:
+            self.skipTest('needs Pillow')
+        bar = (96 + 5, 1080 - 110 - 10)      # the lower third's colored bar
+        self.assertEqual(titles.draw({'style': 'lower_third', 'text': 'Pastor Sam'}, accent='#2F6B4F').getpixel(bar), (47, 107, 79, 255))
+        self.assertEqual(titles.draw({'style': 'lower_third', 'text': 'Pastor Sam'}).getpixel(bar), titles.EMBER)
+        corner = titles.draw({'style': 'corner', 'text': 'Live'}, accent='#FFFFFF')
+        self.assertEqual(corner.getpixel((66, 80)), (255, 255, 255, 255))   # inside the tag, left of its text
 
 
 if __name__ == '__main__':

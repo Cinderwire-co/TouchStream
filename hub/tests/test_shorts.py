@@ -169,6 +169,28 @@ class Rendering(unittest.TestCase):
         self.assertAlmostEqual(float(probe(path)[0]['duration']), 8, delta=0.2)
         self.assertEqual(len(self.db.all("SELECT * FROM library WHERE kind = 'short'")), 1)
 
+    def test_the_channels_brand_puts_its_watermark_at_the_top(self):
+        logo = settings.DATA_DIR / 'media' / 'logo.png'
+        logo.parent.mkdir()
+        subprocess.run([settings.FFMPEG_BIN, '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=200x100', '-frames:v', '1', str(logo)], check=True)
+        now = time.time()
+        media = self.db.run("INSERT INTO media (name, kind, file, created_at) VALUES ('logo.png', 'image', 'logo.png', ?)", now)
+        brand = self.db.run("INSERT INTO brands (name, watermark, watermark_corner, watermark_opacity, created_at) "
+                            "VALUES ('Sunday', ?, 'bottom_right', 100, ?)", media, now)
+        channel = self.db.run("INSERT INTO youtube_channels (channel_id, title, refresh_token, brand_id, created_at) "
+                              "VALUES ('UC1', 'Test', 'rt', ?, ?)", brand, now)
+        self.db.run('INSERT INTO event_targets (event_id, channel_id) VALUES (?, ?)', self.event_id, channel)
+        short, path = self.make(framing='fit', style='bold' if captions else 'none')
+        self.assertEqual(short['spec']['brand'], brand)
+        frame = subprocess.run([settings.FFMPEG_BIN, '-v', 'error', '-ss', '1', '-i', str(path), '-frames:v', '1',
+                                '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], capture_output=True, check=True).stdout
+        x, y = 900, 180               # 24% of the width, 5% in from the right, 6% down
+        r, g, b = frame[(y * 1080 + x) * 3:(y * 1080 + x) * 3 + 3]
+        self.assertTrue(r > 200 and g < 70 and b < 70, (r, g, b))
+        # brand: null is no watermark
+        self.shorts.change(short['id'], 'Welcome', {**short['spec'], 'brand': None})
+        self.assertIsNone(self.shorts.short(short['id'])['spec']['brand'])
+
     def test_limits(self):
         event = self.db.one('SELECT * FROM events WHERE id = ?', self.event_id)
         queued = self.shorts.create(event, 'x', {'source': self.ref, 'start': 0, 'end': 10})

@@ -22,7 +22,7 @@ KINDS = {'video': ('.mp4', '.mov', '.m4v', '.webm', '.mkv'), 'image': ('.png', '
 MAX_BYTES = 4 * 1024 ** 3
 CORNERS = ('top_left', 'top_right', 'bottom_left', 'bottom_right')
 BRAND_FIELDS = ('name', 'intro', 'outro', 'watermark', 'thumbnail', 'watermark_corner', 'watermark_size', 'watermark_opacity',
-                'intro_seconds', 'outro_seconds')
+                'intro_seconds', 'outro_seconds', 'title_color')
 THUMBNAIL_MAX = 2 * 1024 * 1024   # YouTube's limit for a thumbnail
 
 
@@ -152,6 +152,11 @@ class Media:
                 if media and slot not in ('watermark', 'thumbnail') and media['kind'] == 'audio':
                     raise ValueError(f'The {slot} needs to be a video or an image')
                 fields[slot] = media['id'] if media else None
+        if 'title_color' in data:
+            title_color = str(data['title_color'] or '').strip().upper()
+            if title_color and not re.fullmatch(r'#[0-9A-F]{6}', title_color):
+                raise ValueError('The title color needs to be a color like #2F6B4F')
+            fields['title_color'] = title_color or None
         if 'watermark_corner' in data:
             fields['watermark_corner'] = data['watermark_corner'] if data['watermark_corner'] in CORNERS else 'bottom_right'
         for key, low, high in (('watermark_size', 4, 40), ('watermark_opacity', 10, 100),

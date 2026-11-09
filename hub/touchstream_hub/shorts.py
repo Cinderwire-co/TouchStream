@@ -127,10 +127,12 @@ def keep_ranges(start, end, silences):
     return [(a, b) for a, b in ranges if b - a >= 0.1]
 
 
-def render_command(source, info, ranges, spec, output, crop=None, captions_list=None, embed=((), ()), whole=()):
+def render_command(source, info, ranges, spec, output, crop=None, captions_list=None, embed=((), ()), whole=(), brand=None):
     """FFmpeg command for a short. Runs in the folder holding the crop commands and captions.
     crop: (crop width, first x) for 'fill', following crop.cmd; whole: [(start, end)] of the short where
-    'fill' shows the whole picture instead (nobody's in it)."""
+    'fill' shows the whole picture instead (nobody's in it). brand: {watermark (path), corner, size, opacity} or
+    None: the watermark goes at the top, on the brand's side (YouTube's buttons cover the bottom of a Short).
+    Its input comes after the captions', so embed's inputs come after both."""
     width, height, fps = info
     base = ranges[0][0]
     rel = [(a - base, b - base) for a, b in ranges]
@@ -138,6 +140,9 @@ def render_command(source, info, ranges, spec, output, crop=None, captions_list=
            '-ss', f'{base:.3f}', '-to', f'{ranges[-1][1]:.3f}', '-i', str(source)]
     if captions_list:
         cmd += ['-f', 'concat', '-safe', '0', '-i', captions_list.name]
+    total = sum(b - a for a, b in ranges)
+    if brand:
+        cmd += ['-loop', '1', '-framerate', f'{min(60.0, fps):.3f}', '-t', f'{total:.3f}', '-i', brand['watermark']]
     # Video: keep the frames inside the sections, each moved back by the time removed before it
     if len(rel) > 1:
         inside = '+'.join(f'gte(t,{a:.3f})*lt(t,{b:.3f})' for a, b in rel)
@@ -168,7 +173,14 @@ def render_command(source, info, ranges, spec, output, crop=None, captions_list=
         last = '[captioned]'
     else:
         last = '[framed]'
-    total = sum(b - a for a, b in ranges)
+    if brand:
+        n = 2 if captions_list else 1
+        margin = round(WIDTH * 0.05)
+        x = margin if brand['corner'].endswith('left') else f'main_w-overlay_w-{margin}'
+        graph += [f"[{n}:v]format=rgba,scale={round(WIDTH * min(45, brand['size'] * 2) / 100 / 2) * 2}:-2,"
+                  f"colorchannelmixer=aa={brand['opacity'] / 100:.2f}[wm]",
+                  f'{last}[wm]overlay={x}:{round(HEIGHT * 0.06)}:format=auto[branded]']
+        last = '[branded]'
     # fps would otherwise pad the end out to the recording's own length, past the removed pauses
     graph.append(f'{last}fps={min(60.0, fps):.3f},trim=end={total:.3f},format=yuv420p[vout]')
     # Audio: the same sections, with tiny fades at each join so the cuts don't click
@@ -246,12 +258,29 @@ class Shorts:
             raise ValueError('Pick one of the accent colors')
         return {'source': str(spec.get('source', '')), 'start': max(0.0, start), 'end': end,
                 'framing': spec.get('framing') if spec.get('framing') in FRAMINGS else 'fill',
-                'style': style, 'accent': accent, 'trim_pauses': bool(spec.get('trim_pauses'))}
+                'style': style, 'accent': accent, 'trim_pauses': bool(spec.get('trim_pauses')),
+                'brand': int(spec['brand']) if str(spec.get('brand') or '').isdigit() else None}
+
+    def channel_brand(self, event_id):
+        """The brand of the broadcast's first channel that has one, or None."""
+        row = self.db.one('SELECT c.brand_id FROM event_targets t JOIN youtube_channels c ON c.id = t.channel_id '
+                          'WHERE t.event_id = ? AND c.brand_id IS NOT NULL ORDER BY t.id LIMIT 1', event_id)
+        return row['brand_id'] if row else None
+
+    def brand_look(self, brand_id):
+        """A brand's watermark for render_command, or None."""
+        from .media import folder
+        row = self.db.one('SELECT b.watermark_corner, b.watermark_size, b.watermark_opacity, m.file FROM brands b '
+                          'JOIN media m ON m.id = b.watermark WHERE b.id = ?', brand_id) if brand_id else None
+        path = row and folder() / row['file']
+        return {'watermark': str(path), 'corner': row['watermark_corner'], 'size': row['watermark_size'],
+                'opacity': row['watermark_opacity']} if path and path.exists() else None
 
     def create(self, event, title, spec):
         if not AVAILABLE:
             raise ValueError('Shorts need the transcription add-on, which this hub doesn\'t have')
-        spec = self.check(spec)
+        # A short gets its channel's brand unless it says otherwise (brand: null for none)
+        spec = self.check({**spec, 'brand': spec['brand'] if 'brand' in spec else self.channel_brand(event['id'])})
         short_id = self.db.run("INSERT INTO shorts (event_id, title, spec, status, duration, created_at) "
                                "VALUES (?, ?, ?, 'queued', ?, ?)", event['id'], title, json.dumps(spec),
                                spec['end'] - spec['start'], time.time())
@@ -263,7 +292,7 @@ class Shorts:
         short = self.short(short_id)
         if short['status'] in ('queued', 'analyzing', 'rendering', 'publishing'):
             raise ValueError('Wait for it to finish first')
-        spec = self.check(spec)
+        spec = self.check({**spec, 'brand': spec['brand'] if 'brand' in spec else short['spec'].get('brand')})
         self.db.run("UPDATE shorts SET title = ?, spec = ?, status = 'queued', progress = 0, error = NULL, "
                     'duration = ? WHERE id = ?', title, json.dumps(spec), spec['end'] - spec['start'], short_id)
         self.jobs.put(('render', short_id))
@@ -331,8 +360,9 @@ class Shorts:
                 whole = framing.unseen(points, offset)
             listing = captions.frames(words, spec['style'], captions.ACCENTS[spec['accent']], folder) \
                 if spec['style'] != 'none' and words else None
+            brand = self.brand_look(spec.get('brand'))
             cmd, total = render_command(source, info, ranges, spec, partial, crop, listing,
-                                        self.library.embed_args(event, 2 if listing else 1), whole)
+                                        self.library.embed_args(event, 1 + bool(listing) + bool(brand)), whole, brand)
             self.db.run("UPDATE shorts SET status = 'rendering', duration = ? WHERE id = ?", total, short_id)
             print(f"Rendering short {short_id}: {total:.0f} s in {len(ranges)} section(s), {spec['framing']}")
             proc = subprocess.Popen(cmd, cwd=tmp, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

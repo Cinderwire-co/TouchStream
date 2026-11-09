@@ -4,6 +4,7 @@ Each is drawn here as a transparent image the size of the video (so it looks the
 resolution) and FFmpeg fades it in and out over the picture. Drawing them here works with any
 FFmpeg build; many, Homebrew's among them, can't draw text themselves.
 """
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -27,8 +28,22 @@ def _fit(text, name, size, width):
     return _font(name, size)
 
 
-def draw(title, width=1920, height=1080):
-    """A title {text, sub, style} as a transparent image the size of the video."""
+def color(hex_color, default=EMBER):
+    """'#RRGGBB' as RGBA, or the default (TouchStream's ember) if it isn't one."""
+    if isinstance(hex_color, str) and re.fullmatch(r'#[0-9A-Fa-f]{6}', hex_color):
+        return tuple(int(hex_color[i:i + 2], 16) for i in (1, 3, 5)) + (255,)
+    return default
+
+
+def ink_on(rgba):
+    """Dark or white text, whichever reads on that color."""
+    return INK if 0.299 * rgba[0] + 0.587 * rgba[1] + 0.114 * rgba[2] > 150 else WHITE
+
+
+def draw(title, width=1920, height=1080, accent=None):
+    """A title {text, sub, style} as a transparent image the size of the video. accent: the brand's title color
+    ('#RRGGBB') for the lower third's bar, the title's line under it and the corner tag; TouchStream's ember without."""
+    accent = color(accent)
     u = height / 1080                               # everything is laid out for 1080p and scaled
     text, sub = str(title.get('text') or '').strip(), str(title.get('sub') or '').strip()
     image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
@@ -42,7 +57,7 @@ def draw(title, width=1920, height=1080):
         inner = max(big.getlength(text), small.getlength(sub) if sub else 0)
         box_h = round((76 + (46 if sub else 0)) * u)
         top = bottom - box_h
-        pen.rectangle((x, top, x + round(10 * u), bottom), fill=EMBER)
+        pen.rectangle((x, top, x + round(10 * u), bottom), fill=accent)
         pen.rectangle((x + round(10 * u), top, x + round(10 * u) + inner + round(56 * u), bottom), fill=(14, 14, 14, 225))
         pen.text((x + round(38 * u), top + round(18 * u)), text, font=big, fill=WHITE, anchor='lt')
         if sub:
@@ -57,7 +72,7 @@ def draw(title, width=1920, height=1080):
         pen = ImageDraw.Draw(image)
         pen.text((width / 2, middle), text, font=big, fill=WHITE, anchor='mm')
         if sub:
-            pen.text((width / 2, middle + round(92 * u)), sub, font=small, fill=EMBER, anchor='mm')
+            pen.text((width / 2, middle + round(92 * u)), sub, font=small, fill=accent, anchor='mm')
     elif style == 'caption':
         font = _fit(text, 'Bricolage-SemiBold.ttf', round(46 * u), width * 0.8)
         small = _font('Bricolage-Regular.ttf', round(30 * u))
@@ -72,8 +87,8 @@ def draw(title, width=1920, height=1080):
         font = _fit(text.upper(), 'Bricolage-Bold.ttf', round(30 * u), width * 0.4)
         w, h = font.getlength(text.upper()) + round(40 * u), round(52 * u)
         x, top = round(60 * u), round(54 * u)
-        pen.rounded_rectangle((x, top, x + w, top + h), radius=round(10 * u), fill=EMBER)
-        pen.text((x + w / 2, top + h / 2), text.upper(), font=font, fill=INK, anchor='mm')
+        pen.rounded_rectangle((x, top, x + w, top + h), radius=round(10 * u), fill=accent)
+        pen.text((x + w / 2, top + h / 2), text.upper(), font=font, fill=ink_on(accent), anchor='mm')
         if sub:
             pen.text((x + w + round(16 * u), top + h / 2), sub, font=_font('Bricolage-SemiBold.ttf', round(28 * u)),
                      fill=WHITE, anchor='lm', stroke_width=round(2 * u), stroke_fill=(0, 0, 0, 160))

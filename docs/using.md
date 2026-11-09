@@ -105,8 +105,12 @@ Properties on the left, the picture beside them, the timeline underneath, with t
 
 **Settings > Brands**: as many as you like, one per channel or ministry. Each has:
 - an intro and an outro: a video, or an image shown for a few seconds;
-- a watermark: an image in a corner, its size and opacity;
-- the YouTube channels it's for. The editor starts their broadcasts with it.
+- a watermark: an image in a corner, its size and opacity. Shorts get it too, at the top on the same side (YouTube's
+  buttons cover the bottom of a Short);
+- a title color for lower thirds, titles and corner tags (TouchStream's orange without one);
+- a default thumbnail: broadcasts and published edits on its channels without a thumbnail of their own get it;
+- the YouTube channels it's for. The editor starts their broadcasts with it, and their Shorts get its watermark (the
+  Shorts tab can pick another brand, or none).
 
 ## Shorts
 

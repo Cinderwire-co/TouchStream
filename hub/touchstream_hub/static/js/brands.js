@@ -58,9 +58,15 @@ function MediaPick({ label, value, media, kinds, onChange, onUploaded }) {
       <${UploadButton} accept=${kinds.includes('video') ? 'video/*,image/*' : label.startsWith('Default thumbnail') ? 'image/jpeg,image/png' : 'image/*'} label="Upload" done=${(m) => { onUploaded(m); onChange(m.id); }} /></div></div>`;
 }
 
+// Title colors to pick from (the first, no color of its own, is TouchStream's orange)
+const TITLE_COLORS = [['', '#FE5C09', 'TouchStream orange'], ['#2F6B4F', '#2F6B4F', 'Forest'], ['#7A9C78', '#7A9C78', 'Sage'],
+  ['#1E4E8C', '#1E4E8C', 'Navy'], ['#3B82C4', '#3B82C4', 'Blue'], ['#6D3FC0', '#6D3FC0', 'Purple'], ['#B3261E', '#B3261E', 'Crimson'],
+  ['#C9A227', '#C9A227', 'Gold'], ['#FFFFFF', '#FFFFFF', 'White']];
+
 function BrandModal({ brand, seed, media, channels, onClose, onUploaded }) {
   const [f, setF] = useState({ name: '', intro: null, outro: null, watermark: null, thumbnail: null, watermark_corner: 'bottom_right',
-    watermark_size: 12, watermark_opacity: 80, intro_seconds: 5, outro_seconds: 5, channel_ids: [], ...(seed || {}), ...(brand || {}) });
+    watermark_size: 12, watermark_opacity: 80, intro_seconds: 5, outro_seconds: 5, title_color: '', channel_ids: [], ...(seed || {}),
+    ...(brand || {}) });
   const [error, setError] = useState('');
   const set = (patch) => setF({ ...f, ...patch });
   const kindOf = (id) => (media.find((m) => m.id === id) || {}).kind;
@@ -95,6 +101,12 @@ function BrandModal({ brand, seed, media, channels, onClose, onUploaded }) {
           onInput=${(e) => set({ watermark_size: Number(e.target.value) })} /></label>
         <label class="field"><span>Opacity (%)</span><input type="number" min="10" max="100" value=${f.watermark_opacity}
           onInput=${(e) => set({ watermark_opacity: Number(e.target.value) })} /></label></div>`}
+      <div class="field"><span>Title color (lower thirds, titles and corner tags in the editor)</span>
+        <div class="row-tight"><div class="swatches" role="group" aria-label="Title color">
+          ${TITLE_COLORS.map(([value, swatch, name]) => html`<button type="button" class=${(f.title_color || '') === value ? 'on' : ''}
+            style=${`--swatch:${swatch}`} title=${name} aria-label=${name} onClick=${() => set({ title_color: value })}></button>`)}</div>
+          <input type="text" maxlength="7" placeholder="#2F6B4F" aria-label="Title color, as a hex code" style="width:7.5em"
+            value=${f.title_color || ''} onInput=${(e) => set({ title_color: e.target.value.trim() })} /></div></div>
       ${channels.length > 0 && html`<div class="field"><span>Use it for these channels' broadcasts</span>
         ${channels.map((c) => html`<label class="check"><input type="checkbox" checked=${f.channel_ids.includes(c.id)} onChange=${() => toggle(c.id)} />
           <${Avatar} channel=${c} size=${22} /> ${c.title}</label>`)}</div>`}
@@ -129,14 +141,14 @@ export function BrandsSettings({ forChannel = null }) {
   return html`<div class="panel">
     <div class="row-tight"><h2 class="grow">Brands</h2>
       <button class="btn small" onClick=${() => setEditing({})}><${Icon} name="plus" size=${14} /> New brand</button></div>
-    <p class="muted small">How a channel or ministry looks: a default thumbnail for its broadcasts, and an intro, an outro and a watermark
-      for its edited videos (pick a brand in the editor and it puts the intro and outro on the timeline and the watermark over the
-      recording). Make as many as you like.</p>
+    <p class="muted small">How a channel or ministry looks: a default thumbnail for its broadcasts, and an intro, an outro, a watermark
+      and a title color for its edited videos (pick a brand in the editor and it puts the intro and outro on the timeline and the
+      watermark over the recording). Its shorts get the watermark too. Make as many as you like.</p>
     ${data.brands.length === 0 ? html`<p class="muted small">No brands yet.</p>` : html`<div class="brand-list">
       ${data.brands.map((b) => html`<div class="row">
         <div class="grow min0"><b>${b.name}</b>
           <div class="muted small">${[b.thumbnail && `Thumbnail: ${name(b.thumbnail)}`, b.intro && `Intro: ${name(b.intro)}`, b.outro && `Outro: ${name(b.outro)}`,
-            b.watermark && `Watermark: ${name(b.watermark)}`].filter(Boolean).join(' · ') || 'Nothing added yet'}
+            b.watermark && `Watermark: ${name(b.watermark)}`, b.title_color && `Titles: ${b.title_color}`].filter(Boolean).join(' · ') || 'Nothing added yet'}
             ${b.channel_ids.length ? ` · ${channels.filter((c) => b.channel_ids.includes(c.id)).map((c) => c.title).join(', ')}` : ''}</div></div>
         <button class="btn ghost small" onClick=${() => setEditing(b)}>Edit</button>
         <${IconButton} icon="trash" label="Delete" onClick=${() => remove(b)} />
