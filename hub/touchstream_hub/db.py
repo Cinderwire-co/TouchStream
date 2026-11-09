@@ -116,6 +116,31 @@ CREATE TABLE IF NOT EXISTS media (
     created_at REAL NOT NULL
 );
 -- A look for a channel: intro, outro and watermark (media.py)
+-- Edit profiles (autoedit.py): how a broadcast's edit is made by itself once it's transcribed
+CREATE TABLE IF NOT EXISTS edit_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    keep TEXT NOT NULL DEFAULT 'service',       -- service (first words to last) | message (just the preaching)
+    cut_music INTEGER NOT NULL DEFAULT 0,       -- take out the songs
+    trim_pauses INTEGER NOT NULL DEFAULT 0,     -- take out long pauses
+    instructions TEXT NOT NULL DEFAULT '',      -- in their own words, for the assistant
+    brand INTEGER NOT NULL DEFAULT 1,           -- the channel's brand goes on
+    after TEXT NOT NULL DEFAULT 'review',       -- review (wait to be looked over) | publish (by itself)
+    privacy TEXT NOT NULL DEFAULT 'public',     -- when it publishes
+    hide_live TEXT NOT NULL DEFAULT 'keep',     -- private | unlisted | keep: the live video, when it publishes
+    learn INTEGER NOT NULL DEFAULT 1,           -- learn from the edits people make
+    created_at REAL NOT NULL
+);
+-- What a profile learned: an edit someone made of one of its broadcasts, in words, for the assistant
+CREATE TABLE IF NOT EXISTS edit_examples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER NOT NULL REFERENCES edit_profiles(id) ON DELETE CASCADE,
+    event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,                      -- kept and cut, with the words where the cuts fall
+    kept TEXT NOT NULL,                         -- JSON [[start, end]] in the recording
+    created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS brands (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -248,6 +273,12 @@ MIGRATIONS = [
     ('brands', 'thumbnail', 'INTEGER REFERENCES media(id) ON DELETE SET NULL'),
     # A brand's color for titles ('#RRGGBB'); NULL: TouchStream's ember
     ('brands', 'title_color', 'TEXT'),
+    # Edits made by themselves (autoedit.py): the profile a broadcast or series is edited with, when the hub tried,
+    # and on an edit, what made it ({profile_id, profile, why, publish})
+    ('events', 'edit_profile_id', 'INTEGER REFERENCES edit_profiles(id) ON DELETE SET NULL'),
+    ('series', 'edit_profile_id', 'INTEGER REFERENCES edit_profiles(id) ON DELETE SET NULL'),
+    ('events', 'auto_edit_at', 'REAL'),
+    ('edits', 'auto', 'TEXT'),
 ]
 
 

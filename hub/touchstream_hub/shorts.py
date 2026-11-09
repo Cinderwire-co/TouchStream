@@ -113,15 +113,16 @@ def quiet(source, start, end):
     return [(start + a, start + (ends[i] if i < len(ends) else end - start)) for i, a in enumerate(starts)]
 
 
-def keep_ranges(start, end, silences):
-    """The sections of [start, end] left once these quiet stretches are taken out."""
+def keep_ranges(start, end, silences, pause=PAUSE, pad=PAD):
+    """The sections of [start, end] left once these quiet stretches (those at least `pause` long) are taken out,
+    keeping `pad` seconds of each either side."""
     ranges, cursor = [], start
     for a, b in sorted(silences):
-        if b - a < PAUSE:
+        if b - a < pause:
             continue
-        if a + PAD > cursor:
-            ranges.append((cursor, a + PAD))
-        cursor = max(cursor, b - PAD)
+        if a + pad > cursor:
+            ranges.append((cursor, a + pad))
+        cursor = max(cursor, b - pad)
     if end > cursor:
         ranges.append((cursor, end))
     return [(a, b) for a, b in ranges if b - a >= 0.1]

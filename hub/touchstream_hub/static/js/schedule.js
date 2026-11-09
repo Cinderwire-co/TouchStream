@@ -164,7 +164,7 @@ function initial({ event, planned, spokes, channels, defaultSpoke }) {
       title: base ?? src.title, add_date: base != null, date, start: minutes,
       end: src.end_at ? splitTime(src.end_at).minutes : null,
       description: from.description, spoke_id: src.spoke_id, privacy: from.privacy, latency: from.latency,
-      made_for_kids: from.made_for_kids, auto_start: from.auto_start,
+      made_for_kids: from.made_for_kids, auto_start: from.auto_start, edit_profile_id: from.edit_profile_id || null,
       channel_ids: event ? event.targets.map((t) => t.channel_id) : series.channel_ids,
       rule: series ? series.repeat : null, until: series ? series.until_date : null,
     };
@@ -173,7 +173,7 @@ function initial({ event, planned, spokes, channels, defaultSpoke }) {
   const start = soon.getHours() * 60 + soon.getMinutes();
   return { title: '', add_date: true, date: isoDate(soon), start, end: (start + 90) % 1440, description: '',
     spoke_id: defaultSpoke || (spokes[0] && spokes[0].id), privacy: 'public', latency: 'normal', made_for_kids: false,
-    auto_start: true, channel_ids: channels.map((c) => c.id), rule: null, until: null };
+    auto_start: true, edit_profile_id: null, channel_ids: channels.map((c) => c.id), rule: null, until: null };
 }
 
 /** A day in a sentence: "today", "tomorrow", "yesterday", or "on Sunday, Nov 15". */
@@ -186,6 +186,8 @@ export function BroadcastModal({ event, planned, spokes, channels, defaultSpoke,
   const [image, setImage] = useState(null);
   const [error, setError] = useState('');
   const [step, setStep] = useState('');   // what saving is doing now ('': not saving)
+  const [profiles, setProfiles] = useState([]);   // edit profiles (Settings > Editing)
+  useEffect(() => { api('GET', '/api/edit-profiles').then((d) => setProfiles(d.profiles)).catch(() => {}); }, []);
   const set = (k, v) => setF((old) => ({ ...old, [k]: v }));
   const toggleChannel = (id) => set('channel_ids', f.channel_ids.includes(id)
     ? f.channel_ids.filter((c) => c !== id) : [...f.channel_ids, id]);
@@ -201,7 +203,7 @@ export function BroadcastModal({ event, planned, spokes, channels, defaultSpoke,
     if (repeating && !f.rule.days.length) return setError('Pick at least one day of the week for it to repeat on.');
     const startAt = joinTime(f.date, f.start);
     const common = { description: f.description, privacy: f.privacy, latency: f.latency, made_for_kids: f.made_for_kids,
-      auto_start: f.auto_start, channel_ids: f.channel_ids };
+      auto_start: f.auto_start, edit_profile_id: f.edit_profile_id, channel_ids: f.channel_ids };
     const one = { ...common, title: fullTitle, spoke_id: f.spoke_id, start_at: startAt, end_at: length ? startAt + length * 60 : null };
     const rule = { ...common, title: f.title, add_date: f.add_date, repeat: f.rule, start_minutes: f.start,
       length_minutes: length, until_date: f.until, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
@@ -295,6 +297,12 @@ export function BroadcastModal({ event, planned, spokes, channels, defaultSpoke,
           <div class="field"><span>Made for kids?</span>
             <${Select} label="Made for kids" value=${f.made_for_kids ? 'yes' : 'no'} options=${KIDS}
               onChange=${(v) => set('made_for_kids', v === 'yes')} /></div>
+          <div class="field"><span>After it's over</span>
+            ${profiles.length ? html`<${Select} label="After it's over" value=${f.edit_profile_id ? String(f.edit_profile_id) : ''}
+                options=${[['', "Don't edit it by itself"], ...profiles.map((p) => [String(p.id), `Edit it: ${p.name}`])]}
+                onChange=${(v) => set('edit_profile_id', v ? Number(v) : null)} />`
+              : html`<p class="muted small">To have it edited by itself (just the message, the music out, your brand on), make an
+                  edit profile in <a href="#/settings/editing">Settings › Editing</a>.</p>`}</div>
         </div>
         <div class="form">
           <span class="eyebrow">When</span>
@@ -469,6 +477,45 @@ function SpokeCopyChip({ event }) {
         : `${event.spoke_name} is offline: it gets its copy when it's back`}>Not on the spoke yet</span>`;
 }
 
+/** An edit its profile made: being made, or waiting to be looked over. */
+function AutoEditChip({ event }) {
+  const edit = event.edits[event.edits.length - 1];
+  if (!edit || !edit.auto || edit.published.length) return null;
+  const working = ['queued', 'rendering'].includes(edit.status);
+  return html`<a class=${`chip ${working ? '' : 'ember'}`} href=${`#/broadcast/${event.id}`} title=${edit.auto.why}>
+    <${Icon} name="spark" size=${12} /> ${working ? 'Editing by itself' : edit.status === 'failed' ? 'Edit failed' : 'Edit to look over'}</a>`;
+}
+
+/** On an aired broadcast's page: the edit its profile made (or is making), and making one with a profile now, to try
+ * a profile on it. Not when someone edited it: that edit is theirs. */
+function AutoEdit({ event, refresh }) {
+  const [profiles, setProfiles] = useState(null);
+  const [pick, setPick] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api('GET', '/api/edit-profiles').then((d) => setProfiles(d.profiles)).catch(() => setProfiles([])); }, []);
+  const edit = event.edits[event.edits.length - 1];
+  const auto = edit && edit.auto;
+  if ((edit && !auto) || !profiles || (!profiles.length && !auto)) return null;
+  const chosen = pick || String(event.edit_profile_id || (profiles[0] && profiles[0].id) || '');
+  const make = async () => {
+    setBusy(true);
+    try { await api('POST', `/api/events/${event.id}/auto-edit`, { profile_id: Number(chosen) }); refresh(); } catch (err) { toast(err); }
+    setBusy(false);
+  };
+  const working = edit && ['queued', 'rendering', 'publishing'].includes(edit.status);
+  return html`<div class="auto-edit">
+    ${auto && html`<p class="small"><${Icon} name="spark" size=${13} /> <b>Edited by itself</b> (${auto.profile}): ${auto.why}.${' '}
+      ${working ? `${edit.status === 'publishing' ? 'Publishing' : 'Rendering'} ${Math.round(edit.progress * 100)}%…`
+        : edit.status === 'failed' ? html`<span class="error">${edit.error}</span>`
+        : edit.published.length ? 'Published.'
+        : html`<a href=${`#/edit/${event.id}`}>Look it over</a> and publish it, or change it: it learns from what you change.`}</p>`}
+    ${!working && profiles.length > 0 && html`<div class="row-tight">
+      <div style="min-width:220px"><${Select} label="Edit profile" value=${chosen} options=${profiles.map((p) => [String(p.id), p.name])}
+        onChange=${setPick} /></div>
+      <button class="btn small" disabled=${busy} onClick=${make}>${busy ? 'Planning the edit…' : auto ? 'Make it again' : 'Edit it with this profile'}</button></div>`}
+  </div>`;
+}
+
 const transcriptState = (event) => !event.transcript ? '' : event.transcript.status === 'done' ? 'ready'
   : event.transcript.status === 'failed' ? 'failed' : `${Math.round(event.transcript.progress * 100)}%`;
 
@@ -498,6 +545,7 @@ function EventRow({ event, spoke, showSpoke, onEdit, refresh }) {
         </span>`)}
         ${event.targets.length === 0 && event.state !== 'planned' && html`<span class="muted small">${event.adhoc ? 'Went live from the dashboard' : 'Record only'}</span>`}
         <${ViewsChip} stats=${event.stats} live=${event.state === 'live'} />
+        <${AutoEditChip} event=${event} />
       </div>
       ${errors.length > 0 && html`<p class="error small">${errors[0].channel}: ${errors[0].error}</p>`}
     </div>
@@ -626,6 +674,7 @@ export function BroadcastPage({ id }) {
     ['Visibility', label(PRIVACY, event.privacy)],
     ['Latency', label(LATENCY, event.latency)],
     ['Made for kids', event.made_for_kids ? 'Yes' : 'No'],
+    ['Edited by itself', event.edit_profile ? `Yes: ${event.edit_profile}` : 'No'],
   ].filter(Boolean);
   return html`<div>
     <a class="crumb" href="#/schedule"><${Icon} name="back" size=${15} /> Schedule</a>
@@ -701,7 +750,8 @@ export function BroadcastPage({ id }) {
             : `Transcribing ${Math.round(event.transcript.progress * 100)}%`}</a>`}
           ${ended && html`<a class="btn small ghost" href=${`#/edit/${event.id}/shorts`}>${event.shorts ? `Shorts · ${event.shorts}` : 'Shorts'}</a>`}
           ${hubEnv.local && event.folder && html`<${IconButton} icon="folder" label=${revealLabel()} onClick=${() => reveal({ event_id: event.id })} />`}
-        </div>`
+        </div>
+        ${ended && html`<${AutoEdit} event=${event} refresh=${refresh} />`}`
         : html`<p class="muted small">${event.state === 'live' ? 'Recording now: the recordings appear here when it ends.'
           : 'No recordings were kept.'}</p>`}
     </div>`}

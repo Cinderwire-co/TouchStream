@@ -426,6 +426,7 @@ class Editor:
         if edit:
             edit['spec'] = json.loads(edit['spec'])
             edit['published'] = json.loads(edit['published'] or '[]')
+            edit['auto'] = json.loads(edit['auto']) if edit['auto'] else None
         return edit
 
     def current(self, event_id):
@@ -433,8 +434,10 @@ class Editor:
         row = self.db.one('SELECT id FROM edits WHERE event_id = ? ORDER BY id DESC LIMIT 1', event_id)
         return self.edit(row['id']) if row else None
 
-    def create(self, event, source_path, spec):
-        """Render the broadcast's edit, replacing the one it has (when the new render is ready)."""
+    def create(self, event, source_path, spec, auto=None):
+        """Render the broadcast's edit, replacing the one it has (when the new render is ready). auto: made by its edit
+        profile (autoedit.py): {profile_id, profile, why, publish (the request to publish with once it's rendered, or
+        None to wait to be looked over)}; an edit someone renders has none."""
         source = self.library.resolve(source_path)
         if not source:
             raise ValueError('That recording is not available')
@@ -448,13 +451,13 @@ class Editor:
             raise ValueError('Wait for the edit to finish rendering or publishing first')
         if edit:
             self.db.run("UPDATE edits SET source = ?, spec = ?, status = 'queued', progress = 0, duration = ?, "
-                        'error = NULL, created_at = ? WHERE id = ?', source_path, json.dumps(spec), length,
-                        time.time(), edit['id'])
+                        'error = NULL, auto = ?, created_at = ? WHERE id = ?', source_path, json.dumps(spec), length,
+                        json.dumps(auto) if auto else None, time.time(), edit['id'])
             edit_id = edit['id']
         else:
-            edit_id = self.db.run('INSERT INTO edits (event_id, source, spec, status, duration, created_at) '
-                                  "VALUES (?, ?, ?, 'queued', ?, ?)", event['id'], source_path, json.dumps(spec),
-                                  length, time.time())
+            edit_id = self.db.run('INSERT INTO edits (event_id, source, spec, status, duration, auto, created_at) '
+                                  "VALUES (?, ?, ?, 'queued', ?, ?, ?)", event['id'], source_path, json.dumps(spec),
+                                  length, json.dumps(auto) if auto else None, time.time())
         self.db.run('UPDATE events SET edit_draft = NULL WHERE id = ?', event['id'])
         self.jobs.put(('render', edit_id))
         return edit_id
@@ -492,6 +495,8 @@ class Editor:
         self._drop_older(edit_id, event['id'])
         self.library.write_extras(event['id'])
         print(f"Edit {edit_id} rendered")
+        if edit['auto'] and edit['auto'].get('publish') and not edit['published']:   # its profile publishes by itself
+            self.publish(edit_id, edit['auto']['publish'])
 
     def _run(self, cmd, total, edit_id, partial):
         self.db.run("UPDATE edits SET status = 'rendering', progress = 0, error = NULL WHERE id = ?", edit_id)

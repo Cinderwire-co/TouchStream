@@ -7,6 +7,7 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 
 ## Done recently
 
+- Edits made by themselves, the church's way: edit profiles (Settings > Editing) keep just the message or the whole service, take the music out, take long pauses out only if asked, follow the church's own words, put the channel's brand on, then wait to be looked over or publish. They learn from the edits people make (the last eight, in words, for the assistant). A broadcast or series picks one; any can be tried on a past broadcast; agents get `edit_with_profile`.
 - The installer gets the spoke's card image ready in seconds: releases have it as zstd too (`.img.zst`, no bigger), which Go unpacks about fifteen times faster than the `.xz` (5.7 s against 86 s for the 1.4 GB image on an M-series Mac; minutes on a slower PC).
 - Audio only: a broadcast's Download menu has just its sound (or its edit's) as an MP3, made as it downloads, for a podcast or the website.
 - Brands reach titles and Shorts: a brand's title color is used for its lower thirds, titles and corner tags (in the editor's preview and the render), and Shorts get the brand's watermark at the top (the channel's brand by default; the Shorts tab can pick another, or none).
@@ -144,13 +145,13 @@ stream keys meanwhile.
 - Live chat: YouTube's API can't turn it on or off, but can read it and moderate it (delete messages, ban users); a
   chat panel on the broadcast's page, if asked for.
 
-## Automatic edits (next, the user asked for it)
+## Edits made by themselves: still to come
 
-The site's main features list "edited livestreams uploaded for you". Today an edit is made and published by hand. To
-come: after each broadcast, the hub makes its edit by itself, as it makes its Shorts: the dead air before and after
-the service trimmed (from the transcript: the first and last speech), the channel's brand (intro, outro, watermark)
-added, rendered, then waiting for approval or published by itself (a setting per series), with the live video made
-private or unlisted if wanted.
+- Knowing music by its sound as well as its words (an audio classifier such as YAMNet on ONNX Runtime, as the face
+  detection runs), so songs with few clear words still come out, and it works without the assistant.
+- A track on the editor's timeline showing what the profile kept and why, to correct it at a glance.
+- Profiles for Shorts too (how many, which kinds of moments, captions), learning from the ones people publish.
+- Telling people when an edit is waiting (an email, or a notification on the phone).
 
 ## The editor: still to come
 

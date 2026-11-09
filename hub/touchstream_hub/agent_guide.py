@@ -78,6 +78,7 @@ TOOLS = {
     'go_live': 'a scheduled broadcast now, or a spoke on its own',
     'end_live': 'end what is live',
     'edit_video': 'cuts, fades, a color look, a brand and titles; render it, or leave a draft in the editor',
+    'edit_with_profile': 'an aired broadcast, an edit profile\'s way (just the message, music out, branded, as it has learned)',
     'publish_video': 'an edit, to YouTube',
     'make_short': 'a vertical short of a moment',
     'publish_short': 'a short, to YouTube',

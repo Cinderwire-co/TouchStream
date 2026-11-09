@@ -106,6 +106,9 @@ p .mono, .steps .mono { overflow-wrap: anywhere; }
 .form-row input { min-width: 0; }
 .form-row.tight { gap: 8px; }
 div.field { display: grid; gap: 6px; min-width: 0; }
+.learned { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--line-soft); }
+.auto-edit { display: grid; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
+.auto-edit p { margin: 0; }
 .row-tight { display: flex; align-items: center; gap: 8px; }
 .row-tight > .select-wrap { flex: 1; }
 .error { color: var(--bad); font-size: 14px; }

@@ -101,6 +101,26 @@ Properties on the left, the picture beside them, the timeline underneath, with t
 - The **assistant** works here too: "put the Sunday brand on it, make it warm and add a lower third for Pastor Sam at
   30 seconds" changes your timeline, ready for you to check and render.
 
+## Edits made by themselves
+
+**Settings > Editing** holds edit profiles: how a broadcast's edit is made by itself once it's transcribed. Pick one
+under **After it's over** when you schedule a broadcast or a series, or try one on a past broadcast from its page
+(**Edit it with this profile**). Each profile says:
+- **Keep**: just the message (the sermon or talk, which the assistant finds in the transcript) or the whole service
+  (the dead air before the first words and after the last trimmed off).
+- **Take out the music**: the songs and special music, which the assistant finds by their words.
+- **Take out long pauses**: off by default, since a pause is part of preaching; for fast-paced videos.
+- **In your own words**: what your church keeps and cuts ("we open with announcements and two songs; keep from the
+  scripture reading to the closing prayer").
+- **Put the channel's brand on**: its intro, outro, watermark and title color.
+- **Then**: wait for you to look it over (the broadcast says **Edit to look over**), or publish it to YouTube by
+  itself, with its visibility and what happens to the live video.
+- **Learn from my edits**: change an edit it made, or make one yourself, and it does it your way next time. What it
+  learned is listed on the profile (the last eight edits, in words), and you can remove any of it.
+
+Finding the message, taking out the music and following your words need the assistant (an OpenRouter key). Without
+it, a profile trims the dead air before and after, and says so. It never touches an edit you made.
+
 ## Brands
 
 **Settings > Brands**: as many as you like, one per channel or ministry. Each has:

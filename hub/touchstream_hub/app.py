@@ -26,6 +26,7 @@ from starlette.background import BackgroundTask
 
 from . import VERSION, agent_guide, auth, desktop, discovery, platforms, recordings, settings, updates
 from .assistant import Assistant, AssistantError
+from .autoedit import AutoEdits
 from .broadcasts import THUMBNAIL_MAX, THUMBNAIL_TYPES, Broadcasts
 from .db import Database
 from .editor import COLOR, PEAKS_PER_SECOND, Editor, filmstrip, normalize, placements, probe_duration, waveform
@@ -117,6 +118,7 @@ async def lifespan(app):
     hub.discovery.start()
     hub.speedtest = SpeedTest(hub.db)
     hub.assistant = Assistant(hub.db)
+    hub.autoedits = AutoEdits(hub.db, hub.editor, hub.media, hub.transcriber, hub.assistant)
     hub.updates = Updates(hub.db)
     hub.updates.start(busy=busy_with)
     hub.stats = Stats(hub.db, hub.youtube)
@@ -125,9 +127,11 @@ async def lifespan(app):
     hub.pairing, hub.pair_failures = {}, {}
     print(f"TouchStream Hub {VERSION} - data in {settings.DATA_DIR}")
     shorts_task = asyncio.create_task(make_shorts_by_themselves())
+    edits_task = asyncio.create_task(make_edits_by_themselves())
     async with mcp_server.server.session_manager.run():   # the MCP endpoint, for AI agents
         yield
     shorts_task.cancel()
+    edits_task.cancel()
     hub.restreamer.stop_all()
     hub.mtx.stop()
     await hub.http.aclose()
@@ -664,6 +668,7 @@ def event_view(event, copies=None):
             'spoke_online': bool(spoke and spoke['last_seen'] and time.time() - spoke['last_seen'] < ONLINE_FOR),
             'spoke_name': spoke['name'] if spoke else None, 'spoke_removed': bool(not spoke or spoke['removed_at']),
             'adhoc': bool(event['adhoc']), 'detached': bool(event['detached']),
+            'edit_profile': (hub.autoedits.profile(event['edit_profile_id']) or {}).get('name'),
             'series': hub.series.view(series) if series else None, 'targets': targets, 'recordings': copies or [],
             'edits': [edit_view(hub.editor.edit(e['id'])) for e in
                       hub.db.all('SELECT id FROM edits WHERE event_id = ? ORDER BY id', event['id'])],
@@ -701,6 +706,10 @@ def _event_fields(data, partial=False, timing=True):
     for field, default in (('made_for_kids', False), ('auto_start', True)):
         if field in data or not partial:
             f[field] = int(bool(data.get(field, default)))
+    if 'edit_profile_id' in data or not partial:
+        f['edit_profile_id'] = int(data['edit_profile_id']) if data.get('edit_profile_id') else None
+        if f['edit_profile_id'] and not hub.autoedits.profile(f['edit_profile_id']):
+            raise HTTPException(400, 'That edit profile is gone')
     return f
 
 
@@ -989,7 +998,9 @@ def with_views(published):
 
 def edit_view(edit):
     return {**{k: edit[k] for k in ('id', 'event_id', 'source', 'spec', 'status', 'progress', 'duration',
-                                    'output', 'error', 'created_at')}, 'published': with_views(edit['published'])}
+                                    'output', 'error', 'created_at')}, 'published': with_views(edit['published']),
+            # made by its edit profile: {profile_id, profile, why, publish}
+            'auto': edit['auto'] and {k: edit['auto'].get(k) for k in ('profile_id', 'profile', 'why')}}
 
 
 def _event_copies(event):
@@ -1029,6 +1040,24 @@ def editor_status(event_id: int):
 
 AUTO_SHORTS = 3          # Shorts the hub makes of a broadcast by itself, unless Settings says otherwise
 SHORT_LOOK = {'framing': 'fill', 'style': 'bold', 'accent': 'ember', 'trim_pauses': True}   # (as the editor's)
+
+
+async def make_edits_by_themselves():
+    """Once a broadcast with an edit profile is transcribed, its edit is made that profile's way, rendered, and left
+    to look over or published (autoedit.py). Once each, within three days of airing."""
+    await asyncio.sleep(60)
+    while True:
+        for row in hub.db.all("SELECT e.id, e.title FROM events e JOIN transcripts t ON t.event_id = e.id "
+                              "WHERE e.edit_profile_id IS NOT NULL AND e.auto_edit_at IS NULL AND e.state = 'ended' "
+                              "AND t.status = 'done' AND COALESCE(e.ended_at, e.end_at, e.start_at) > ?", time.time() - 3 * 86400):
+            try:
+                if await hub.autoedits.make(row['id']):
+                    print(f"Editing {row['title']} by itself")
+            except (ValueError, AssistantError) as e:
+                print(f"Editing {row['title']} by itself: {e}")
+            except Exception as e:  # never let the loop die
+                print(f"Editing {row['title']} by itself failed: {e}")
+        await asyncio.sleep(120)
 
 
 async def make_shorts_by_themselves():
@@ -1136,10 +1165,12 @@ def create_edit(event_id: int, data: dict = Body()):
     event = hub.broadcasts.event(event_id)
     if not event or data.get('source') not in [c['path'] for c in _event_copies(event)]:
         raise HTTPException(400, 'Pick one of this broadcast\'s recordings')
+    spec = _edit_spec(data)
     try:
-        edit_id = hub.editor.create(event, data['source'], _edit_spec(data))
+        edit_id = hub.editor.create(event, data['source'], spec)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    hub.autoedits.learn(event, data['source'], spec)   # its edit profile learns how they like it
     return edit_view(hub.editor.edit(edit_id))
 
 
@@ -1252,6 +1283,80 @@ def delete_brand(brand_id: int):
     return {'ok': True}
 
 
+# ---- Edit profiles: edits made by themselves (autoedit.py) ----
+@app.get('/api/edit-profiles', dependencies=[Depends(admin)])
+def list_edit_profiles():
+    """Edit profiles, each with how many edits it has learned from; ai: whether the assistant is on (finding the
+    message, the music and following instructions need it); transcribing: whether broadcasts are transcribed (every
+    profile needs that)."""
+    return {'profiles': hub.autoedits.profiles(), 'ai': hub.assistant.enabled(),
+            'transcribing': bool(hub.transcriber.options()['enabled'] and hub.transcriber.options()['available'])}
+
+
+@app.post('/api/edit-profiles', dependencies=[Depends(admin)])
+def create_edit_profile(data: dict = Body()):
+    """An edit profile. Body: name; keep (service: first words to last | message: just the preaching); cut_music,
+    trim_pauses (long pauses); instructions (their own words, for the assistant); brand (the channel's brand goes
+    on); after (review | publish); privacy and hide_live (private | unlisted | keep), for when it publishes; learn
+    (from the edits people make). A broadcast or series uses one by its edit_profile_id."""
+    try:
+        return hub.autoedits.save(None, data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.patch('/api/edit-profiles/{profile_id}', dependencies=[Depends(admin)])
+def update_edit_profile(profile_id: int, data: dict = Body()):
+    if not hub.autoedits.profile(profile_id):
+        raise HTTPException(404)
+    try:
+        return hub.autoedits.save(profile_id, data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete('/api/edit-profiles/{profile_id}', dependencies=[Depends(admin)])
+def delete_edit_profile(profile_id: int):
+    """Broadcasts and series that used it aren't edited by themselves any more; edits it made stay."""
+    hub.autoedits.delete(profile_id)
+    return {'ok': True}
+
+
+@app.get('/api/edit-profiles/{profile_id}/examples', dependencies=[Depends(admin)])
+def edit_profile_examples(profile_id: int):
+    """What the profile has learned: the edits people made of its broadcasts, newest first, as the assistant reads them."""
+    return [{k: x[k] for k in ('id', 'event_id', 'title', 'summary', 'created_at')} for x in hub.autoedits.examples(profile_id)]
+
+
+@app.delete('/api/edit-profiles/{profile_id}/examples/{example_id}', dependencies=[Depends(admin)])
+def forget_edit_example(profile_id: int, example_id: int):
+    hub.autoedits.forget(example_id)
+    return {'ok': True}
+
+
+@app.post('/api/events/{event_id}/auto-edit', dependencies=[Depends(admin)])
+async def auto_edit_now(event_id: int, data: dict = Body(default={})):
+    """Make a broadcast's edit with an edit profile now (profile_id; default: its own), to try a profile on a past
+    broadcast. It replaces an edit a profile made, never one a person made."""
+    event = hub.broadcasts.event(event_id)
+    if not event or event['state'] != 'ended':
+        raise HTTPException(400, 'Only a broadcast that has aired can be edited')
+    profile_id = int(data.get('profile_id') or event['edit_profile_id'] or 0)
+    if not hub.autoedits.profile(profile_id):
+        raise HTTPException(400, 'Pick an edit profile')
+    current = hub.editor.current(event_id)
+    if current and not current['auto']:
+        raise HTTPException(400, 'This broadcast has an edit someone made: delete it first to let a profile make one')
+    if current and current['status'] in ('queued', 'rendering', 'publishing'):
+        raise HTTPException(400, 'Wait for its edit to finish first')
+    hub.db.run('UPDATE events SET edit_profile_id = ? WHERE id = ?', profile_id, event_id)
+    try:
+        edit_id = await hub.autoedits.make(event_id, again=True)
+    except (ValueError, AssistantError) as e:
+        raise HTTPException(400, str(e))
+    return edit_view(hub.editor.edit(edit_id))
+
+
 @app.get('/api/edits/{edit_id}', dependencies=[Depends(admin)])
 def get_edit(edit_id: int):
     edit = hub.editor.edit(edit_id)
@@ -1277,6 +1382,8 @@ def publish_edit(edit_id: int, data: dict = Body()):
         raise HTTPException(400, 'Give the video a title')
     if data.get('privacy') not in ('public', 'unlisted', 'private'):
         raise HTTPException(400, 'Choose who can see the video')
+    if edit['auto']:   # publishing the edit its profile made, as it is: that's how they like it too
+        hub.autoedits.learn(hub.broadcasts.event(edit['event_id']), edit['source'], edit['spec'])
     hub.editor.publish(edit_id, {
         'channel_ids': channel_ids, 'title': title,
         'description': re.sub(r'[<>]', '', str(data.get('description', '')))[:5000],
