@@ -161,7 +161,7 @@ a setting, measured at the hub (MediaMTX's byte count and SRT stats, and a copy 
 white flash and a beep every second). Scripts: a sweep through the hub's API and a pygame player, kept out of the
 repo.
 
-1. **The dashboard's bitrate never reached the encoder** (fixed after 0.1.5): the spoke kept the hub's frame rate
+1. **The dashboard's bitrate never reached the encoder** (fixed in 0.1.6): the spoke kept the hub's frame rate
    but not its bitrate, and the helper reads both from the spoke's settings, so every box encoded at 8000 kbps (or
    what its own setup page set). Every run below is at 8000 kbps, whatever was asked.
 2. **At 8000 kbps the encoder spends what the picture needs, up to about the target**: a real service video

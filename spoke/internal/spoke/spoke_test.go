@@ -50,6 +50,10 @@ func TestTheHubsQualityReachesTheEncoder(t *testing.T) {
 	if c := s.Store.Get(); c.BitrateKbps != 12000 {
 		t.Fatalf("bitrate %d after a heartbeat without one", c.BitrateKbps)
 	}
+	s.Apply(&hub.Desired{Mode: "off", Plan: direct.Plan{BitrateKbps: 25000}}) // more than the encoder takes
+	if c := s.Store.Get(); c.BitrateKbps != MaxKbps {
+		t.Fatalf("bitrate %d, not the most it can do (the encoder would fall back to 8000)", c.BitrateKbps)
+	}
 }
 
 func TestADueBroadcastGoesStraightToYouTube(t *testing.T) {

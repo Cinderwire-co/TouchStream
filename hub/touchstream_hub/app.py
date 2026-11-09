@@ -50,6 +50,7 @@ LOOPBACK = ('127.0.0.1', '::1')
 PUBLISH_PATH = re.compile(r'^(spoke|preview)/([A-Za-z0-9]+)$')
 SCHEDULE_DAYS = 7          # how far ahead spokes keep a copy of their schedule
 FRAME_RATES = ('24', '25', '30', '50', '60')   # any spoke's; each says which it can capture (spoke_rates)
+KBPS = (1000, 20000)   # bitrates: what a spoke that hasn't said can take (the PicoKVM's encoder; spoke_kbps)
 
 
 class Hub:
@@ -447,8 +448,8 @@ def _spoke_fields(changes, fields=('name', 'location', 'time_zone', *SPOKE_SHARE
     for field in fields:
         if field in changes:
             value = casts[field](changes[field])
-            if field == 'bitrate_kbps' and not 1000 <= value <= 20000:   # (the box's encoder takes up to 20000)
-                raise HTTPException(400, 'Bitrate must be 1000-20000 kbps')
+            if field == 'bitrate_kbps' and not KBPS[0] <= value <= KBPS[1]:
+                raise HTTPException(400, f'Bitrate must be {KBPS[0]}-{KBPS[1]} kbps')
             if field == 'framerate' and value not in FRAME_RATES:
                 raise HTTPException(400, f"Frame rate must be one of {', '.join(FRAME_RATES)}")
             if field == 'time_zone' and value and value not in zoneinfo.available_timezones():
@@ -463,14 +464,31 @@ def spoke_rates(spoke):
     return [r for r in FRAME_RATES if r in rates] if isinstance(rates, list) and rates else list(FRAME_RATES)
 
 
+def spoke_kbps(spoke):
+    """The bitrates a spoke says its encoder takes (in its heartbeat), least and most."""
+    status = spoke.get('status') or {}
+    low, high = status.get('min_kbps'), status.get('max_kbps')
+    return (low, high) if isinstance(low, int) and isinstance(high, int) and 0 < low <= high else KBPS
+
+
+def spoke_cant(spoke, field, value):
+    """Why this spoke can't take this setting (its frame rates, its encoder's bitrates), or None."""
+    if field == 'framerate' and value not in spoke_rates(spoke):
+        return f"This spoke can capture 1080p at {', '.join(spoke_rates(spoke))} fps"
+    low, high = spoke_kbps(spoke)
+    if field == 'bitrate_kbps' and not low <= value <= high:
+        return f'This spoke can send {low / 1000:g} to {high / 1000:g} Mbps'
+
+
 @app.patch('/api/spokes/{spoke_id}', dependencies=[Depends(admin)])
 def update_spoke(spoke_id: str, changes: dict = Body()):
     spoke = hub.db.spoke(spoke_id)
     if not spoke:
         raise HTTPException(404)
     fields = _spoke_fields(changes)
-    if fields.get('framerate') and fields['framerate'] not in spoke_rates(spoke):
-        raise HTTPException(400, f"This spoke can capture 1080p at {', '.join(spoke_rates(spoke))} fps")
+    for field, value in fields.items():
+        if (cant := spoke_cant(spoke, field, value)):
+            raise HTTPException(400, cant)
     for field, value in fields.items():
         hub.db.run(f'UPDATE spokes SET {field} = ? WHERE id = ?', value, spoke_id)
     return spoke_view(hub.db.spoke(spoke_id))
@@ -494,8 +512,8 @@ def set_spoke_defaults(changes: dict = Body()):
     hub.db.set_setting('spoke_defaults', {**(hub.db.get_setting('spoke_defaults') or {}), **fields})
     for field, value in fields.items():
         for spoke in hub.db.spokes():
-            # A spoke that can't capture this frame rate keeps its own
-            if field != 'framerate' or value in spoke_rates(spoke):
+            # A spoke that can't do this (a frame rate, a bitrate) keeps its own
+            if not spoke_cant(spoke, field, value):
                 hub.db.run(f'UPDATE spokes SET {field} = ? WHERE id = ?', value, spoke['id'])
     return get_spoke_defaults()
 

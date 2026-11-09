@@ -171,8 +171,20 @@ const ratesFor = (spoke) => {
   const own = spoke.status && spoke.status.framerates;
   return Array.isArray(own) && own.length ? FRAME_RATES.filter(([r]) => own.includes(r)) : FRAME_RATES;
 };
-// More motion needs more bits: 50 and 60 fps get a higher bitrate unless one is already set
-const bitsFor = (rate, kbps) => (Number(rate) >= 50 && kbps < 10000 ? 12000 : kbps);
+/** The bitrates this spoke's encoder takes (it says in its heartbeat; the PicoKVM's until it has). */
+const kbpsFor = (spoke) => {
+  const s = spoke.status || {};
+  return s.min_kbps && s.max_kbps ? [s.min_kbps, s.max_kbps] : [1000, 20000];
+};
+/** The qualities this spoke can send, and its own bitrate if that's none of them (set through the API). */
+const qualitiesFor = (spoke, kbps) => {
+  const [low, high] = kbpsFor(spoke);
+  const fit = QUALITY.filter((q) => q.kbps >= low && q.kbps <= high);
+  const own = fit.some((q) => q.kbps === Number(kbps)) ? [] : [{ kbps: Number(kbps), label: 'Its own', note: 'set through the API' }];
+  return [...own, ...fit].map((q) => [q.kbps, `${q.label} · ${q.kbps / 1000} Mbps`, q.note]);
+};
+// More motion needs more bits: 50 and 60 fps get a higher bitrate unless one is already set (as much as the spoke takes)
+const bitsFor = (rate, kbps, most = 20000) => (Number(rate) >= 50 && kbps < 10000 ? Math.min(12000, most) : kbps);
 
 /** The source's actual rate differs from the setting (29.97 counts as 30). */
 /** The stream isn't at the spoke's frame rate: the source sends one it can't be made from (a spoke streams every
@@ -214,7 +226,7 @@ function zonesFor(spoke, chosen) {
 function SpokeSettingsModal({ spoke, onClose }) {
   const [form, setForm] = useState({ name: spoke.name, location: spoke.location, bitrate_kbps: spoke.bitrate_kbps,
     record_local: spoke.record_local, framerate: spoke.framerate, time_zone: spoke.time_zone || '' });
-  const setRate = (rate) => setForm({ ...form, framerate: rate, bitrate_kbps: bitsFor(rate, form.bitrate_kbps) });
+  const setRate = (rate) => setForm({ ...form, framerate: rate, bitrate_kbps: bitsFor(rate, form.bitrate_kbps, kbpsFor(spoke)[1]) });
   const [error, setError] = useState('');
   const [sent, setSent] = useState('');
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -245,9 +257,9 @@ function SpokeSettingsModal({ spoke, onClose }) {
       <div class="form-row">
         <div class="field"><span>Frame rate</span>
           <${Select} label="Frame rate" value=${form.framerate} options=${ratesFor(spoke)} onChange=${setRate} /></div>
-        <div class="field"><span>Quality (H.264 High)</span>
+        <div class="field"><span>Quality</span>
           <${Select} label="Quality" value=${form.bitrate_kbps} onChange=${(v) => setForm({ ...form, bitrate_kbps: v })}
-            options=${QUALITY.map((q) => [q.kbps, `${q.label} · ${q.kbps / 1000} Mbps`, q.note])} /></div>
+            options=${qualitiesFor(spoke, form.bitrate_kbps)} /></div>
       </div>
       <p class="muted small" style="margin-top:-6px">The spoke asks its HDMI source for this rate. Most cameras follow
         automatically; if yours doesn't, set its HDMI output to match (29.97 is fine for 30). The list shows what this spoke
@@ -283,7 +295,7 @@ export function AllSpokesModal({ onClose }) {
   return html`<${Modal} title="Settings for all spokes" onClose=${onClose}>
     <form class="form" onSubmit=${save}>
       <p class="muted small">Saving sets these on all ${d.spokes} spoke${d.spokes === 1 ? '' : 's'}, and on spokes you add
-        later (a spoke that can't capture the frame rate keeps its own). You can still change one spoke on its own in its
+        later (a spoke that can't do the frame rate or the quality keeps its own). You can still change one spoke on its own in its
         settings.</p>
       <div class="form-row">
         <div class="field"><span>Frame rate${own('framerate')}</span>
