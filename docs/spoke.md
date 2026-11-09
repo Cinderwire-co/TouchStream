@@ -13,7 +13,9 @@ solder.
 
 ## What you need
 
-- **Luckfox PicoKVM**, the version with the 1.54" touchscreen (sold by Waveshare and others)
+- **Luckfox PicoKVM**, the version with the 1.54" touchscreen: on [Amazon](https://www.amazon.com/dp/B0FR4B11QD) or from
+  [Waveshare](https://www.waveshare.com/product/luckfox/luckfox-picokvm.htm). Or buy one
+  [ready to go from Cinderwire](https://cinderwire.co/touchstream#buy), already set up, with its card.
 - A **microSD card**, 32 GB or more: the spoke's own recordings live on it
 - A **USB-C power supply** (5 V, 2 A) and an **Ethernet cable**. The box has no Wi-Fi: see [Wi-Fi](#wi-fi).
 

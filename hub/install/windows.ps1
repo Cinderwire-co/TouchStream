@@ -61,7 +61,7 @@ function Get-Verified($url, $file, $sha256) {
 }
 
 function Stop-Hub {
-    if (Get-ScheduledTask -TaskName $Task -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName $Task }
+    if (Get-ScheduledTask -TaskName $Task -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName $Task -ErrorAction SilentlyContinue }
     # The hub and its MediaMTX, so their files can be replaced and their ports freed
     Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe' OR Name = 'python.exe'" |
         Where-Object { $_.CommandLine -like '*touchstream_hub*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
@@ -79,6 +79,18 @@ function Invoke-Elevated($script) {
     } catch { return $false }
 }
 
+# A task registered from an elevated session (PowerShell run as administrator, or over SSH, where an administrator's
+# session is elevated) can't be replaced or removed from a normal one: Windows says access denied (0x80070005).
+# Remove it as administrator: one UAC prompt.
+function Remove-HubTask($name) {
+    Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
+    if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) {
+        Say "Removing the hub's old sign-in task (Windows asks for permission)"
+        Invoke-Elevated "Unregister-ScheduledTask -TaskName '$name' -Confirm:`$false" | Out-Null
+    }
+    -not (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue)
+}
+
 # Our own uv, not whichever one another app put on the PATH
 $Uv = "$HOME\.local\bin\uv.exe"
 
@@ -87,8 +99,8 @@ if ($env:TOUCHSTREAM_UNINSTALL) {
     Say 'Stopping the hub'
     Stop-Hub
     Say 'Removing the hub'
-    Unregister-ScheduledTask -TaskName $Task -Confirm:$false -ErrorAction SilentlyContinue
-    Unregister-ScheduledTask -TaskName "$Task Update" -Confirm:$false -ErrorAction SilentlyContinue
+    Remove-HubTask $Task | Out-Null
+    Remove-HubTask "$Task Update" | Out-Null
     Remove-Item $Shortcut -Force -ErrorAction SilentlyContinue
     if (Test-Path $Uv) {
         # uv reports on stderr, which Windows PowerShell would treat as a failure here
@@ -208,8 +220,16 @@ $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $options = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName $Task -Action $action -Trigger $trigger -Settings $options -Principal $principal `
-    -Description 'TouchStream Hub: schedules and records your spokes, and streams them to YouTube' -Force | Out-Null
+$register = {
+    Register-ScheduledTask -TaskName $Task -Action $action -Trigger $trigger -Settings $options -Principal $principal `
+        -Description 'TouchStream Hub: schedules and records your spokes, and streams them to YouTube' -Force | Out-Null
+}
+try { & $register } catch {
+    # an old task this session may not replace (see Remove-HubTask): remove it, then register ours
+    if ($_.FullyQualifiedErrorId -notmatch '0x80070005' -and $_.Exception.HResult -ne -2147024891) { throw }
+    if (-not (Remove-HubTask $Task)) { throw "Windows didn't allow replacing the hub's old sign-in task. Run the installer again and choose Yes when Windows asks." }
+    & $register
+}
 Start-ScheduledTask -TaskName $Task
 
 # ---- "TouchStream Hub" in the Start menu: opens the dashboard ----

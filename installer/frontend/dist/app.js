@@ -393,7 +393,9 @@ function box() {
     h('div', { class: 'panel' },
       h('label', { class: 'check' }, have, h('span', {}, 'I have a Luckfox PicoKVM with the screen, for each spoke')),
       h('label', { class: 'check' }, cards, h('span', {}, 'and a microSD card for each, 32 GB or more', h('div', { class: 'muted small' }, 'A “high endurance” card lasts longest. A card reader too, if this computer has no SD slot.')))),
-    h('div', { class: 'actions' }, next, h('span', { class: 'spacer' }), h('button', { class: 'link', onclick: otherBox }, 'I have a different box')));
+    h('div', { class: 'actions' }, next, h('span', { class: 'spacer' }),
+      h('button', { class: 'link', onclick: () => api.OpenURL('https://www.amazon.com/dp/B0FR4B11QD') }, 'Where to get one'),
+      h('button', { class: 'link', onclick: otherBox }, 'I have a different box')));
 }
 
 function otherBox() {
