@@ -81,8 +81,10 @@ def _change():
 
 
 async def _call(fn, *args, **kwargs):
-    """Run one of the hub's route functions off the event loop, turning its errors into tool errors."""
+    """Run one of the hub's route functions (off the event loop, unless it's async), turning its errors into tool errors."""
     try:
+        if asyncio.iscoroutinefunction(fn):
+            return await fn(*args, **kwargs)
         return await asyncio.to_thread(fn, *args, **kwargs)
     except HTTPException as e:
         raise ToolError(str(e.detail))
@@ -182,7 +184,21 @@ async def hub_overview() -> dict:
         'live': [_brief(e, spokes) for e in events['events'] if e['state'] == 'live'],
         'next': [_brief(e, spokes) for e in upcoming if e['state'] != 'live'][:5],
         'hub_free_bytes': info['storage']['free'], 'hub_time': _when(datetime.now().timestamp()),
+        # How broadcasts get edited by themselves afterwards (Settings > Editing): pick one by name when scheduling
+        'edit_profiles': [{'name': x['name'], 'keeps': x['keep'], 'cuts_music': x['cut_music'], 'then': x['after']}
+                          for x in hub_app.hub.autoedits.profiles()],
     }
+
+
+def _profile_id(name):
+    """An edit profile's id from its name; 'none' (or '') for no profile."""
+    if name.strip().lower() in ('', 'none'):
+        return None
+    found = next((x for x in hub_app.hub.autoedits.profiles() if x['name'].lower() == name.strip().lower()), None)
+    if not found:
+        raise ToolError(f"No edit profile called {name}; there's " +
+                        (', '.join(x['name'] for x in hub_app.hub.autoedits.profiles()) or 'none yet (Settings > Editing)'))
+    return found['id']
 
 
 @server.tool(annotations=READ)
@@ -203,14 +219,16 @@ async def list_broadcasts(when: Literal['upcoming', 'past'] = 'upcoming', spoke_
 
 @server.tool(annotations=READ)
 async def get_broadcast(broadcast_id: str) -> dict:
-    """One broadcast in full: its details, YouTube links, recordings (with lengths), edit and transcript."""
+    """One broadcast in full: its details, YouTube links, recordings (with lengths, and the API paths to download each
+    or just its sound as an MP3), edit and transcript."""
     event = _event(broadcast_id)
     data = await _call(hub_app.editor_source, event['id'])
     e = data['event']
     item = {**_brief(e, _spoke_names()), 'description': e['description'], 'privacy': e['privacy'],
             'latency': e['latency'], 'auto_start': e['auto_start'],
             'youtube': [{'channel': t['channel'], 'watch': t['watch_url'], 'error': t['error']} for t in e['targets']],
-            'recordings': [{'kind': c['source'], 'seconds': round(c['duration'])} for c in data['copies']]}
+            'recordings': [{'kind': c['source'], 'seconds': round(c['duration']), 'download': f"/api/recordings/file/{c['path']}",
+                            'audio': f"/api/recordings/audio/{c['path']}"} for c in data['copies']]}
     if data['edit']:
         edit = data['edit']
         item['edit'] = {'status': edit['status'], 'seconds': round(edit['duration'] or 0), 'cuts': edit['spec'],
@@ -245,9 +263,10 @@ async def get_transcript(broadcast_id: str, search: str | None = None) -> dict:
 async def schedule_broadcast(title: str, start: str, spoke_id: str | None = None, end: str | None = None,
                              description: str = '', channel_ids: list[int] | None = None,
                              privacy: Literal['public', 'unlisted', 'private'] = 'public',
-                             repeat: Repeat | None = None) -> dict:
+                             repeat: Repeat | None = None, edit_profile: str | None = None) -> dict:
     """Schedule a broadcast, once or repeating. It's created on YouTube too, and goes live and ends by itself.
-    spoke_id defaults to the only spoke; channel_ids to every connected channel (none connected: record only)."""
+    spoke_id defaults to the only spoke; channel_ids to every connected channel (none connected: record only).
+    edit_profile: the name of an edit profile (hub_overview lists them) to edit it by itself afterwards."""
     _change()
     spokes = hub_app.hub.db.spokes()
     if not spoke_id:
@@ -260,7 +279,8 @@ async def schedule_broadcast(title: str, start: str, spoke_id: str | None = None
         raise ToolError('end is before start')
     if channel_ids is None:
         channel_ids = [c['id'] for c in hub_app.channel_list()]
-    common = {'spoke_id': spoke_id, 'description': description, 'privacy': privacy, 'channel_ids': channel_ids}
+    common = {'spoke_id': spoke_id, 'description': description, 'privacy': privacy, 'channel_ids': channel_ids,
+              'edit_profile_id': _profile_id(edit_profile or '')}
     if not repeat:
         e = await _call(hub_app.create_event, {**common, 'title': title, 'start_at': begins, 'end_at': ends})
         return {'scheduled': _brief(e, _spoke_names())}
@@ -277,14 +297,17 @@ async def schedule_broadcast(title: str, start: str, spoke_id: str | None = None
 async def update_broadcast(broadcast_id: str, title: str | None = None, description: str | None = None,
                            start: str | None = None, end: str | None = None,
                            privacy: Literal['public', 'unlisted', 'private'] | None = None,
-                           channel_ids: list[int] | None = None,
+                           channel_ids: list[int] | None = None, edit_profile: str | None = None,
                            apply_to: Literal['this', 'all_upcoming'] = 'this') -> dict:
     """Change an upcoming broadcast (YouTube follows). For a repeating one, apply_to "this" changes just this date;
-    "all_upcoming" changes the series (title, description, time of day, privacy, channels) and every upcoming date
-    not changed on its own."""
+    "all_upcoming" changes the series (title, description, time of day, privacy, channels, edit profile) and every
+    upcoming date not changed on its own. edit_profile: an edit profile's name to edit it by itself afterwards, or
+    "none"."""
     _change()
     changes = {k: v for k, v in (('title', title), ('description', description), ('privacy', privacy),
                                  ('channel_ids', channel_ids)) if v is not None}
+    if edit_profile is not None:
+        changes['edit_profile_id'] = _profile_id(edit_profile)
     planned = _planned(broadcast_id)
     event = None if planned else _event(broadcast_id)
     series = hub_app.hub.series.get(planned[0] if planned else event['series_id']) if planned or event['series_id'] else None
@@ -416,6 +439,18 @@ async def edit_video(broadcast_id: str, start: float | str | None = None, end: f
         return {'draft': True, 'seconds': round(at), 'note': 'On their timeline in the editor, ready to look at and render'}
     edit = await _call(hub_app.create_edit, event['id'], spec)
     return {'rendering': True, 'seconds': round(edit['duration']), 'from': f"the {copy['source']} recording"}
+
+
+@server.tool(annotations=CHANGE)
+async def edit_with_profile(broadcast_id: str, edit_profile: str | None = None) -> dict:
+    """Make an aired broadcast's edit with an edit profile now (by name; default: the one it has), the profile's way:
+    just the message or the whole service, music out or in, branded, using what the profile has learned. It renders,
+    then waits to be looked over or publishes, as the profile says. Never replaces an edit a person made."""
+    _change()
+    event = _event(broadcast_id)
+    body = {'profile_id': _profile_id(edit_profile)} if edit_profile else {}
+    edit = await _call(hub_app.auto_edit_now, event['id'], body)
+    return {'rendering': True, 'seconds': round(edit['duration'] or 0), 'plan': (edit['auto'] or {}).get('why')}
 
 
 @server.tool(annotations=CHANGE)

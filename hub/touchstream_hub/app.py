@@ -8,12 +8,14 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 import threading
 import time
 import zoneinfo
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
@@ -24,11 +26,12 @@ from starlette.background import BackgroundTask
 
 from . import VERSION, agent_guide, auth, desktop, discovery, platforms, recordings, settings, updates
 from .assistant import Assistant, AssistantError
+from .autoedit import AutoEdits
 from .broadcasts import THUMBNAIL_MAX, THUMBNAIL_TYPES, Broadcasts
 from .db import Database
 from .editor import COLOR, PEAKS_PER_SECOND, Editor, filmstrip, normalize, placements, probe_duration, waveform
 from .media import Media
-from .library import Library, safe_name
+from .library import Library, audio_command, makes_mp3, safe_name
 from .mediamtx import MediaMTX
 from .restream import Restreamer
 from .retention import Retention
@@ -47,6 +50,7 @@ LOOPBACK = ('127.0.0.1', '::1')
 PUBLISH_PATH = re.compile(r'^(spoke|preview)/([A-Za-z0-9]+)$')
 SCHEDULE_DAYS = 7          # how far ahead spokes keep a copy of their schedule
 FRAME_RATES = ('24', '25', '30', '50', '60')   # any spoke's; each says which it can capture (spoke_rates)
+KBPS = (1000, 20000)   # bitrates: what a spoke that hasn't said can take (the PicoKVM's encoder; spoke_kbps)
 
 
 class Hub:
@@ -115,6 +119,7 @@ async def lifespan(app):
     hub.discovery.start()
     hub.speedtest = SpeedTest(hub.db)
     hub.assistant = Assistant(hub.db)
+    hub.autoedits = AutoEdits(hub.db, hub.editor, hub.media, hub.transcriber, hub.assistant)
     hub.updates = Updates(hub.db)
     hub.updates.start(busy=busy_with)
     hub.stats = Stats(hub.db, hub.youtube)
@@ -123,9 +128,11 @@ async def lifespan(app):
     hub.pairing, hub.pair_failures = {}, {}
     print(f"TouchStream Hub {VERSION} - data in {settings.DATA_DIR}")
     shorts_task = asyncio.create_task(make_shorts_by_themselves())
+    edits_task = asyncio.create_task(make_edits_by_themselves())
     async with mcp_server.server.session_manager.run():   # the MCP endpoint, for AI agents
         yield
     shorts_task.cancel()
+    edits_task.cancel()
     hub.restreamer.stop_all()
     hub.mtx.stop()
     await hub.http.aclose()
@@ -298,7 +305,7 @@ def state(request: Request):
     token = request.cookies.get(auth.SESSION_COOKIE)
     signed = bool(token and hub.sessions.valid(token))
     return {'version': VERSION, 'setup_needed': not hub.db.get_setting('admin_password'), 'signed_in': signed,
-            'local': is_local(request), 'platform': desktop.PLATFORM,
+            'local': is_local(request), 'platform': desktop.PLATFORM, 'audio': 'MP3' if makes_mp3() else 'M4A',
             # The assistant: on with an OpenRouter key; 'asked' once the key was offered at setup (or skipped)
             **({'ai': {'enabled': hub.assistant.enabled(), 'asked': bool(hub.db.get_setting('ai_asked'))},
                 'update': update_notice()} if signed else {})}
@@ -441,8 +448,8 @@ def _spoke_fields(changes, fields=('name', 'location', 'time_zone', *SPOKE_SHARE
     for field in fields:
         if field in changes:
             value = casts[field](changes[field])
-            if field == 'bitrate_kbps' and not 1000 <= value <= 25000:
-                raise HTTPException(400, 'Bitrate must be 1000-25000 kbps')
+            if field == 'bitrate_kbps' and not KBPS[0] <= value <= KBPS[1]:
+                raise HTTPException(400, f'Bitrate must be {KBPS[0]}-{KBPS[1]} kbps')
             if field == 'framerate' and value not in FRAME_RATES:
                 raise HTTPException(400, f"Frame rate must be one of {', '.join(FRAME_RATES)}")
             if field == 'time_zone' and value and value not in zoneinfo.available_timezones():
@@ -457,14 +464,31 @@ def spoke_rates(spoke):
     return [r for r in FRAME_RATES if r in rates] if isinstance(rates, list) and rates else list(FRAME_RATES)
 
 
+def spoke_kbps(spoke):
+    """The bitrates a spoke says its encoder takes (in its heartbeat), least and most."""
+    status = spoke.get('status') or {}
+    low, high = status.get('min_kbps'), status.get('max_kbps')
+    return (low, high) if isinstance(low, int) and isinstance(high, int) and 0 < low <= high else KBPS
+
+
+def spoke_cant(spoke, field, value):
+    """Why this spoke can't take this setting (its frame rates, its encoder's bitrates), or None."""
+    if field == 'framerate' and value not in spoke_rates(spoke):
+        return f"This spoke can capture 1080p at {', '.join(spoke_rates(spoke))} fps"
+    low, high = spoke_kbps(spoke)
+    if field == 'bitrate_kbps' and not low <= value <= high:
+        return f'This spoke can send {low / 1000:g} to {high / 1000:g} Mbps'
+
+
 @app.patch('/api/spokes/{spoke_id}', dependencies=[Depends(admin)])
 def update_spoke(spoke_id: str, changes: dict = Body()):
     spoke = hub.db.spoke(spoke_id)
     if not spoke:
         raise HTTPException(404)
     fields = _spoke_fields(changes)
-    if fields.get('framerate') and fields['framerate'] not in spoke_rates(spoke):
-        raise HTTPException(400, f"This spoke can capture 1080p at {', '.join(spoke_rates(spoke))} fps")
+    for field, value in fields.items():
+        if (cant := spoke_cant(spoke, field, value)):
+            raise HTTPException(400, cant)
     for field, value in fields.items():
         hub.db.run(f'UPDATE spokes SET {field} = ? WHERE id = ?', value, spoke_id)
     return spoke_view(hub.db.spoke(spoke_id))
@@ -488,8 +512,8 @@ def set_spoke_defaults(changes: dict = Body()):
     hub.db.set_setting('spoke_defaults', {**(hub.db.get_setting('spoke_defaults') or {}), **fields})
     for field, value in fields.items():
         for spoke in hub.db.spokes():
-            # A spoke that can't capture this frame rate keeps its own
-            if field != 'framerate' or value in spoke_rates(spoke):
+            # A spoke that can't do this (a frame rate, a bitrate) keeps its own
+            if not spoke_cant(spoke, field, value):
                 hub.db.run(f'UPDATE spokes SET {field} = ? WHERE id = ?', value, spoke['id'])
     return get_spoke_defaults()
 
@@ -662,6 +686,7 @@ def event_view(event, copies=None):
             'spoke_online': bool(spoke and spoke['last_seen'] and time.time() - spoke['last_seen'] < ONLINE_FOR),
             'spoke_name': spoke['name'] if spoke else None, 'spoke_removed': bool(not spoke or spoke['removed_at']),
             'adhoc': bool(event['adhoc']), 'detached': bool(event['detached']),
+            'edit_profile': (hub.autoedits.profile(event['edit_profile_id']) or {}).get('name'),
             'series': hub.series.view(series) if series else None, 'targets': targets, 'recordings': copies or [],
             'edits': [edit_view(hub.editor.edit(e['id'])) for e in
                       hub.db.all('SELECT id FROM edits WHERE event_id = ? ORDER BY id', event['id'])],
@@ -699,6 +724,10 @@ def _event_fields(data, partial=False, timing=True):
     for field, default in (('made_for_kids', False), ('auto_start', True)):
         if field in data or not partial:
             f[field] = int(bool(data.get(field, default)))
+    if 'edit_profile_id' in data or not partial:
+        f['edit_profile_id'] = int(data['edit_profile_id']) if data.get('edit_profile_id') else None
+        if f['edit_profile_id'] and not hub.autoedits.profile(f['edit_profile_id']):
+            raise HTTPException(400, 'That edit profile is gone')
     return f
 
 
@@ -987,7 +1016,9 @@ def with_views(published):
 
 def edit_view(edit):
     return {**{k: edit[k] for k in ('id', 'event_id', 'source', 'spec', 'status', 'progress', 'duration',
-                                    'output', 'error', 'created_at')}, 'published': with_views(edit['published'])}
+                                    'output', 'error', 'created_at')}, 'published': with_views(edit['published']),
+            # made by its edit profile: {profile_id, profile, why, publish}
+            'auto': edit['auto'] and {k: edit['auto'].get(k) for k in ('profile_id', 'profile', 'why')}}
 
 
 def _event_copies(event):
@@ -1027,6 +1058,24 @@ def editor_status(event_id: int):
 
 AUTO_SHORTS = 3          # Shorts the hub makes of a broadcast by itself, unless Settings says otherwise
 SHORT_LOOK = {'framing': 'fill', 'style': 'bold', 'accent': 'ember', 'trim_pauses': True}   # (as the editor's)
+
+
+async def make_edits_by_themselves():
+    """Once a broadcast with an edit profile is transcribed, its edit is made that profile's way, rendered, and left
+    to look over or published (autoedit.py). Once each, within three days of airing."""
+    await asyncio.sleep(60)
+    while True:
+        for row in hub.db.all("SELECT e.id, e.title FROM events e JOIN transcripts t ON t.event_id = e.id "
+                              "WHERE e.edit_profile_id IS NOT NULL AND e.auto_edit_at IS NULL AND e.state = 'ended' "
+                              "AND t.status = 'done' AND COALESCE(e.ended_at, e.end_at, e.start_at) > ?", time.time() - 3 * 86400):
+            try:
+                if await hub.autoedits.make(row['id']):
+                    print(f"Editing {row['title']} by itself")
+            except (ValueError, AssistantError) as e:
+                print(f"Editing {row['title']} by itself: {e}")
+            except Exception as e:  # never let the loop die
+                print(f"Editing {row['title']} by itself failed: {e}")
+        await asyncio.sleep(120)
 
 
 async def make_shorts_by_themselves():
@@ -1134,10 +1183,12 @@ def create_edit(event_id: int, data: dict = Body()):
     event = hub.broadcasts.event(event_id)
     if not event or data.get('source') not in [c['path'] for c in _event_copies(event)]:
         raise HTTPException(400, 'Pick one of this broadcast\'s recordings')
+    spec = _edit_spec(data)
     try:
-        edit_id = hub.editor.create(event, data['source'], _edit_spec(data))
+        edit_id = hub.editor.create(event, data['source'], spec)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    hub.autoedits.learn(event, data['source'], spec)   # its edit profile learns how they like it
     return edit_view(hub.editor.edit(edit_id))
 
 
@@ -1250,6 +1301,80 @@ def delete_brand(brand_id: int):
     return {'ok': True}
 
 
+# ---- Edit profiles: edits made by themselves (autoedit.py) ----
+@app.get('/api/edit-profiles', dependencies=[Depends(admin)])
+def list_edit_profiles():
+    """Edit profiles, each with how many edits it has learned from; ai: whether the assistant is on (finding the
+    message, the music and following instructions need it); transcribing: whether broadcasts are transcribed (every
+    profile needs that)."""
+    return {'profiles': hub.autoedits.profiles(), 'ai': hub.assistant.enabled(),
+            'transcribing': bool(hub.transcriber.options()['enabled'] and hub.transcriber.options()['available'])}
+
+
+@app.post('/api/edit-profiles', dependencies=[Depends(admin)])
+def create_edit_profile(data: dict = Body()):
+    """An edit profile. Body: name; keep (service: first words to last | message: just the preaching); cut_music,
+    trim_pauses (long pauses); instructions (their own words, for the assistant); brand (the channel's brand goes
+    on); after (review | publish); privacy and hide_live (private | unlisted | keep), for when it publishes; learn
+    (from the edits people make). A broadcast or series uses one by its edit_profile_id."""
+    try:
+        return hub.autoedits.save(None, data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.patch('/api/edit-profiles/{profile_id}', dependencies=[Depends(admin)])
+def update_edit_profile(profile_id: int, data: dict = Body()):
+    if not hub.autoedits.profile(profile_id):
+        raise HTTPException(404)
+    try:
+        return hub.autoedits.save(profile_id, data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete('/api/edit-profiles/{profile_id}', dependencies=[Depends(admin)])
+def delete_edit_profile(profile_id: int):
+    """Broadcasts and series that used it aren't edited by themselves any more; edits it made stay."""
+    hub.autoedits.delete(profile_id)
+    return {'ok': True}
+
+
+@app.get('/api/edit-profiles/{profile_id}/examples', dependencies=[Depends(admin)])
+def edit_profile_examples(profile_id: int):
+    """What the profile has learned: the edits people made of its broadcasts, newest first, as the assistant reads them."""
+    return [{k: x[k] for k in ('id', 'event_id', 'title', 'summary', 'created_at')} for x in hub.autoedits.examples(profile_id)]
+
+
+@app.delete('/api/edit-profiles/{profile_id}/examples/{example_id}', dependencies=[Depends(admin)])
+def forget_edit_example(profile_id: int, example_id: int):
+    hub.autoedits.forget(example_id)
+    return {'ok': True}
+
+
+@app.post('/api/events/{event_id}/auto-edit', dependencies=[Depends(admin)])
+async def auto_edit_now(event_id: int, data: dict = Body(default={})):
+    """Make a broadcast's edit with an edit profile now (profile_id; default: its own), to try a profile on a past
+    broadcast. It replaces an edit a profile made, never one a person made."""
+    event = hub.broadcasts.event(event_id)
+    if not event or event['state'] != 'ended':
+        raise HTTPException(400, 'Only a broadcast that has aired can be edited')
+    profile_id = int(data.get('profile_id') or event['edit_profile_id'] or 0)
+    if not hub.autoedits.profile(profile_id):
+        raise HTTPException(400, 'Pick an edit profile')
+    current = hub.editor.current(event_id)
+    if current and not current['auto']:
+        raise HTTPException(400, 'This broadcast has an edit someone made: delete it first to let a profile make one')
+    if current and current['status'] in ('queued', 'rendering', 'publishing'):
+        raise HTTPException(400, 'Wait for its edit to finish first')
+    hub.db.run('UPDATE events SET edit_profile_id = ? WHERE id = ?', profile_id, event_id)
+    try:
+        edit_id = await hub.autoedits.make(event_id, again=True)
+    except (ValueError, AssistantError) as e:
+        raise HTTPException(400, str(e))
+    return edit_view(hub.editor.edit(edit_id))
+
+
 @app.get('/api/edits/{edit_id}', dependencies=[Depends(admin)])
 def get_edit(edit_id: int):
     edit = hub.editor.edit(edit_id)
@@ -1275,6 +1400,8 @@ def publish_edit(edit_id: int, data: dict = Body()):
         raise HTTPException(400, 'Give the video a title')
     if data.get('privacy') not in ('public', 'unlisted', 'private'):
         raise HTTPException(400, 'Choose who can see the video')
+    if edit['auto']:   # publishing the edit its profile made, as it is: that's how they like it too
+        hub.autoedits.learn(hub.broadcasts.event(edit['event_id']), edit['source'], edit['spec'])
     hub.editor.publish(edit_id, {
         'channel_ids': channel_ids, 'title': title,
         'description': re.sub(r'[<>]', '', str(data.get('description', '')))[:5000],
@@ -1563,6 +1690,27 @@ def download_recording(relative: str):
     if not path:
         raise HTTPException(404)
     return FileResponse(path, filename=path.name)
+
+
+@app.get('/api/recordings/audio/{relative:path}', dependencies=[Depends(admin)])
+def download_audio(relative: str):
+    """Just the sound of a recording, edit or short: an MP3 (M4A if this FFmpeg can't make MP3s), made as it
+    downloads, so it starts straight away at any length."""
+    path = hub.library.resolve(relative)
+    if not path:
+        raise HTTPException(404)
+    cmd, name = audio_command(path)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+    def sound():
+        try:
+            while block := proc.stdout.read(256 * 1024):
+                yield block
+        finally:
+            proc.kill()
+            proc.wait()
+    return StreamingResponse(sound(), media_type='audio/mpeg' if name.endswith('.mp3') else 'audio/mp4',
+                             headers={'Content-Disposition': f"attachment; filename*=UTF-8''{quote(name)}"})
 
 
 @app.delete('/api/recordings/file/{relative:path}', dependencies=[Depends(admin)])

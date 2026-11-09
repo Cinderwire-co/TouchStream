@@ -33,6 +33,9 @@ var Version = "0.1.0-dev"
 // Rates is the 1080p frame rates the PicoKVM can capture: the hub offers only these.
 var Rates = []string{"24", "25", "30", "50", "60"}
 
+// MinKbps and MaxKbps are the bitrates its encoder takes (touchstream-capture): the hub offers only these.
+const MinKbps, MaxKbps = 1000, 20000
+
 type Spoke struct {
 	Store    *config.Store
 	Source   media.Source
@@ -149,6 +152,12 @@ func (s *Spoke) Apply(d *hub.Desired) {
 		// On the box this also tells the HDMI source which rate to send (still to come)
 		_ = s.Store.Update(func(c *config.Config) { c.Framerate = d.Framerate })
 		log.Printf("Frame rate set to 1080p%s", d.Framerate)
+	}
+	if kbps := min(max(d.BitrateKbps, MinKbps), MaxKbps); d.BitrateKbps > 0 && kbps != s.Store.Get().BitrateKbps {
+		// The encoder reads it from here, as it does the frame rate (the plan's copy is for going direct); one
+		// it can't take would have it fall back to 8000
+		_ = s.Store.Update(func(c *config.Config) { c.BitrateKbps = kbps })
+		log.Printf("Bitrate set to %d kbps", kbps)
 	}
 	s.mu.Lock()
 	if d.Mode == "live" && s.mode != "live" {
@@ -380,8 +389,8 @@ func (s *Spoke) Status() map[string]any {
 		"schedule_kept": kept,
 		"update":        upd, "update_error": nilIfEmpty(updateErr), "update_failed": nilIfEmpty(update.Failed(s.Data)),
 		"version": Version, "model": "picokvm", "framerates": Rates, "signal": sig.Present,
-		"signal_label": nil, "signal_fps": nil, "stream_fps": nil, "framerate": nonEmpty(s.Store.Get().Framerate, "30"),
-		"source": nil, "test_pattern": false, "test_pattern_at": 0,
+		"min_kbps": MinKbps, "max_kbps": MaxKbps, "signal_label": nil, "signal_fps": nil, "stream_fps": nil,
+		"framerate": nonEmpty(s.Store.Get().Framerate, "30"), "source": nil, "test_pattern": false, "test_pattern_at": 0,
 		"temp": cpuTemp(), "cpu": s.cpu.percent(), "mode": nonEmpty(mode, "off"), "network": "Ethernet",
 		"uplink": up, "uplink_error": nilIfEmpty(upErr),
 		"recording": s.Recorder.Recording(), "uploading": nilIfEmpty(s.Uploader.Status()),

@@ -67,17 +67,20 @@ class Broadcasts:
     def create(self, fields, channel_ids):
         event_id = self.db.run(
             'INSERT INTO events (spoke_id, title, description, start_at, end_at, privacy, latency, '
-            'made_for_kids, auto_start, series_id, occurrence, detached, created_at) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'made_for_kids, auto_start, edit_profile_id, series_id, occurrence, detached, created_at) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             fields['spoke_id'], fields['title'], fields['description'], fields['start_at'], fields['end_at'],
             fields['privacy'], fields['latency'], int(fields['made_for_kids']), int(fields['auto_start']),
-            fields.get('series_id'), fields.get('occurrence'), int(fields.get('detached', 0)), time.time())
+            fields.get('edit_profile_id'), fields.get('series_id'), fields.get('occurrence'), int(fields.get('detached', 0)),
+            time.time())
         for channel_id in channel_ids:
             self.db.run('INSERT INTO event_targets (event_id, channel_id) VALUES (?, ?)', event_id, channel_id)
         self.sync(event_id)
         return event_id
 
     def update(self, event_id, fields, channel_ids=None):
+        if 'edit_profile_id' in fields:     # the hub's own: nothing on YouTube changes
+            self.db.run('UPDATE events SET edit_profile_id = ? WHERE id = ?', fields['edit_profile_id'], event_id)
         for field in ('title', 'description', 'start_at', 'end_at', 'privacy', 'latency',
                       'made_for_kids', 'auto_start'):
             if field in fields:

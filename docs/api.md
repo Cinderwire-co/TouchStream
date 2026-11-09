@@ -52,13 +52,15 @@ For now, use Claude Code or another app that can send a header.
 
 **n8n**: add an **MCP Client Tool** node with the same URL, and the token as a Bearer header.
 
-The agent gets thirteen tools:
-- `hub_overview`
-- `list_broadcasts`, `get_broadcast`
-- `schedule_broadcast` (once or repeating), `update_broadcast`, `delete_broadcast`
+The agent gets fourteen tools:
+- `hub_overview` (with the edit profiles)
+- `list_broadcasts`, `get_broadcast` (with paths to download each recording, or just its sound as an MP3)
+- `schedule_broadcast` (once or repeating, with an edit profile to edit it by itself afterwards), `update_broadcast`,
+  `delete_broadcast`
 - `go_live`, `end_live`
 - `get_transcript`, `edit_video` (cuts, fades, transitions, a color look, a brand and titles; render it, or leave
-  it on the editor's timeline as a draft), `publish_video`
+  it on the editor's timeline as a draft), `edit_with_profile` (an edit profile's way: just the message, music out,
+  branded, as it has learned), `publish_video`
 - `make_short`, `publish_short`
 
 It also gets a short brief of how things ripple: what YouTube does when you change, delete or publish. So you can ask
@@ -75,6 +77,13 @@ does. For example:
 
 ```bash
 curl -H "Authorization: Bearer ts_..." http://192.168.1.20:8080/api/events
+```
+
+Recordings download from `/api/recordings/file/<path>`, and just their sound, as an MP3 for a podcast or website,
+from `/api/recordings/audio/<path>` (`get_broadcast` gives both paths for each recording):
+
+```bash
+curl -OJ -H "Authorization: Bearer ts_..." http://192.168.1.20:8080/api/recordings/audio/library/12
 ```
 
 GET requests need read access; anything that changes something needs control. Settings, the old-recordings rules

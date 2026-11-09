@@ -29,7 +29,7 @@ PLAN_LOOK = 400         # how far to look for a series' next date
 CHECK_SECONDS = 60
 WEEKS = ('every', 'other')   # or a list of the weeks of the month: 1-4, and -1 for the last
 FIELDS = ('title', 'add_date', 'description', 'privacy', 'latency', 'made_for_kids', 'auto_start',
-          'repeat', 'first_date', 'start_minutes', 'length_minutes', 'until_date', 'timezone')
+          'repeat', 'first_date', 'start_minutes', 'length_minutes', 'until_date', 'timezone', 'edit_profile_id')
 
 
 def zone(name):
@@ -158,7 +158,7 @@ class Series:
         start, end = times(s, day)
         return {'spoke_id': s['spoke_id'], 'title': title(s, day), 'description': s['description'],
                 'start_at': start, 'end_at': end, 'privacy': s['privacy'], 'latency': s['latency'],
-                'made_for_kids': s['made_for_kids'], 'auto_start': s['auto_start']}
+                'made_for_kids': s['made_for_kids'], 'auto_start': s['auto_start'], 'edit_profile_id': s['edit_profile_id']}
 
     def create_date(self, series_id, day, fields=None, channel_ids=None):
         """Create the broadcast for one date now; with `fields`, as a broadcast changed on its own."""
@@ -200,7 +200,8 @@ class Series:
         series_id = self.db.run(
             f"INSERT INTO series (spoke_id, {', '.join(FIELDS)}, channel_ids, created_at) "
             f"VALUES (?, {', '.join('?' for _ in FIELDS)}, ?, ?)",
-            fields['spoke_id'], *(fields[f] for f in FIELDS), json.dumps(channel_ids), time.time())
+            fields['spoke_id'], *(fields.get(f) if f == 'edit_profile_id' else fields[f] for f in FIELDS),   # (optional)
+            json.dumps(channel_ids), time.time())
         if from_event:
             self.db.run('UPDATE events SET series_id = ?, occurrence = ?, detached = 0 WHERE id = ?',
                         series_id, fields['first_date'], from_event)

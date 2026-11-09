@@ -6,6 +6,7 @@ import { Select } from './fields.js';
 import { confirmAction, toast } from './dialogs.js';
 import { AssistantSettings } from './assistant.js';
 import { BrandsSettings } from './brands.js';
+import { EditProfilesSettings } from './profiles.js';
 import { ConnectChannelModal } from './schedule.js';
 
 function YouTubeSettings() {
@@ -441,6 +442,7 @@ const SECTIONS = [
   ['youtube', 'YouTube', 'Channels and Google sign-in'],
   ['recordings', 'Recordings', 'Where they go, how long they stay, transcripts and Shorts'],
   ['brands', 'Brands', 'Intros, outros and watermarks'],
+  ['editing', 'Editing', 'Edits made by themselves, your way'],
   ['ai', 'Assistant and API', 'The assistant, AI agents and scripts'],
   ['network', 'Network', 'How spokes and encoders reach the hub'],
 ];
@@ -457,6 +459,7 @@ export function SettingsPage({ section, sub }) {
     recordings: html`<${RecordingsFolder} s=${s} saved=${saved} /><${OldRecordings} saved=${saved} />
       <${TranscriptionSettings} options=${s.transcription} saved=${saved} /><${AutoShorts} options=${s.shorts_auto} saved=${saved} />`,
     brands: html`<${BrandsSettings} forChannel=${/^channel-\d+$/.test(sub || '') ? Number(sub.slice(8)) : null} />`,
+    editing: html`<${EditProfilesSettings} />`,
     ai: html`<${AssistantSettings} changed=${() => dispatchEvent(new Event('ts-auth'))} /><${ApiAccess} />`,
     network: html`<${Network} s=${s} />`,
   }[key];

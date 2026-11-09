@@ -28,6 +28,7 @@ import tempfile
 import threading
 import time
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 
 from . import VERSION, recordings, settings
@@ -39,6 +40,30 @@ KINDS = {'hub': 'hub recording', 'spoke': 'spoke recording', 'edit': 'edited', '
 ABOUT = {'hub': 'recorded by the hub as it arrived', 'spoke': 'recorded on the spoke (no network gaps)',
          'edit': 'edited on the hub', 'short': 'a vertical short, made on the hub'}
 WINDOWS_RESERVED = {'CON', 'PRN', 'AUX', 'NUL', *(f'COM{i}' for i in range(1, 10)), *(f'LPT{i}' for i in range(1, 10))}
+
+
+@lru_cache(maxsize=1)
+def makes_mp3():
+    """Whether this FFmpeg can make MP3s (libmp3lame: the builds the installers bring can); without, audio is M4A."""
+    try:
+        found = subprocess.run([settings.FFMPEG_BIN, '-hide_banner', '-encoders'], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return 'libmp3lame' in found.stdout
+
+
+def audio_command(path):
+    """(FFmpeg command writing a recording's sound to its output, file name): an MP3 at 128 kbps, as podcasts use, or
+    the AAC as it is, in an M4A, where FFmpeg can't make MP3s. The recording's details (title, date) go with it."""
+    path = Path(path)
+    encode = (['-c:a', 'libmp3lame', '-b:a', '128k', '-id3v2_version', '3', '-f', 'mp3'] if makes_mp3()
+              else ['-c:a', 'copy', '-movflags', 'frag_keyframe+empty_moov', '-f', 'mp4'])
+    cmd = [settings.FFMPEG_BIN, '-hide_banner', '-loglevel', 'error', '-nostdin', '-i', str(path), '-map', '0:a:0', '-vn', *encode, 'pipe:1']
+    # 'Title - spoke recording 2' -> 'Title - audio 2'; 'Title - edited' -> 'Title - edited audio'
+    found = re.fullmatch(r'(.*) - (hub recording|spoke recording|edited|short)( \d+)?', path.stem)
+    name = (f"{found[1]} - {'' if 'recording' in found[2] else found[2] + ' '}audio{found[3] or ''}" if found
+            else f'{path.stem} - audio')
+    return cmd, f"{name}.{'mp3' if makes_mp3() else 'm4a'}"
 
 
 def safe_name(title):

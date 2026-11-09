@@ -33,6 +33,16 @@ They're on: {page}. In the video editor, edit with edit_video render=false: your
 for them to see and render, unless they ask you to render it."""
 
 
+EDIT_PLAN = """You edit the recording of a broadcast ("{title}"), usually a church service, into the video they post
+afterwards. Its transcript follows, numbered by sentence, with the time each starts. Decide which stretches to keep.
+
+What they want:
+{wants}
+{own}{learned}
+Keep whole sentences: start a stretch where a thought starts and end it after one ends. Keep the message in one piece
+unless something inside it is to be cut. Reply with JSON only, no other text:
+{{"keep": [{{"from": <first sentence number>, "to": <last sentence number>}}], "why": "<one short sentence: what you
+kept and what you cut>"}}"""
 SUGGEST = """You pick moments from the transcript of a broadcast ("{title}") that would make strong vertical shorts
 for YouTube Shorts, Instagram Reels and TikTok. It's often a church service, a talk or an event.
 
@@ -148,6 +158,48 @@ class Assistant:
                 moments.append({'start': start, 'end': end, 'title': str(m.get('title') or '')[:80].strip(),
                                 'why': str(m.get('why') or '')[:200].strip()})
         return moments[:6]
+
+    # ---- Planning an edit (autoedit.py) ----
+    async def plan_edit(self, title, sentences, profile, examples=()):
+        """Which stretches of a broadcast to keep, its edit profile's way, from its transcript's sentences
+        ([{start, end, text}]) and what the profile learned (examples: [{title, summary}], newest first):
+        ([(first sentence, last sentence)], why)."""
+        config = self.config()
+        if not config.get('api_key'):
+            raise AssistantError('Planning an edit uses the assistant: add an OpenRouter key in Settings')
+        wants = ['- The whole service, from the first words to the last.' if profile['keep'] == 'service' else
+                 "- Just the message: the sermon, preaching or main talk, from where it begins (often a scripture "
+                 "reading, or \"turn with me to...\") to where it ends (often a closing prayer).",
+                 '- Take out the songs and music: worship, hymns, special music. You know them by their lyrics, lines '
+                 'that repeat, and "let\'s stand and sing".' if profile['cut_music'] else '- Keep the music.']
+        own = f"\nIn their own words:\n{profile['instructions']}\n" if profile['instructions'] else ''
+        learned = ''.join(f"\nExample {n} ({x['title']}):\n{x['summary']}\n" for n, x in enumerate(examples[:8], 1))
+        if learned:
+            learned = ('\nHow they edited their recent broadcasts. Follow the same pattern: find the same kinds of '
+                       'moments, though the times differ each week.\n' + learned)
+        numbered = '\n'.join(f"[{i}] ({int(s['start']) // 3600}:{int(s['start']) % 3600 // 60:02d}:{int(s['start']) % 60:02d}) {s['text']}"
+                              for i, s in enumerate(sentences))[:150000]
+        message = await self._complete(config, [
+            {'role': 'system', 'content': EDIT_PLAN.format(title=title, wants='\n'.join(wants), own=own, learned=learned)},
+            {'role': 'user', 'content': numbered}])
+        text = message.get('content') or ''
+        try:
+            reply = json.loads(text[text.index('{'):text.rindex('}') + 1])
+            keep = reply['keep']
+        except (ValueError, KeyError, TypeError):
+            raise AssistantError("The model's plan didn't come back in a form I could read")
+        picked = []
+        for k in keep if isinstance(keep, list) else []:
+            try:
+                first, last = sorted((int(k['from']), int(k['to'])))
+            except (KeyError, TypeError, ValueError):
+                continue
+            first, last = max(0, first), min(len(sentences) - 1, last)
+            if first <= last:
+                picked.append((first, last))
+        if not picked:
+            raise AssistantError('The model kept nothing of it')
+        return sorted(picked), str(reply.get('why') or '')[:300].strip() or 'As the profile asks'
 
     async def _complete(self, config, messages, tools=None):
         try:

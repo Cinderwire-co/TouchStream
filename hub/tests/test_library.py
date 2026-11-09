@@ -11,7 +11,25 @@ from pathlib import Path
 from touchstream_hub import settings
 from touchstream_hub.db import Database
 from touchstream_hub.editor import render_command
-from touchstream_hub.library import Library, file_name, safe_name
+from touchstream_hub.library import Library, audio_command, file_name, safe_name
+
+
+class AudioOnly(unittest.TestCase):
+    def test_just_the_sound_named_for_the_broadcast(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / 'Sunday - spoke recording.mp4'
+            subprocess.run([settings.FFMPEG_BIN, '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=15:d=4',
+                            '-f', 'lavfi', '-i', 'sine=d=4', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac',
+                            '-metadata', 'title=Sunday', '-shortest', str(video)], check=True)
+            cmd, name = audio_command(video)
+            self.assertRegex(name, r'^Sunday - audio\.(mp3|m4a)$')
+            out = Path(tmp) / name
+            out.write_bytes(subprocess.run(cmd, capture_output=True, check=True).stdout)
+            streams = json.loads(subprocess.run([settings.FFPROBE_BIN, '-v', 'error', '-show_entries', 'stream=codec_type:format=duration',
+                                                 '-of', 'json', str(out)], capture_output=True, text=True, check=True).stdout)
+            self.assertEqual([s['codec_type'] for s in streams['streams']], ['audio'])
+            self.assertAlmostEqual(float(streams['format']['duration']), 4, delta=0.3)
+        self.assertEqual(audio_command('/x/Sunday - edited 2.mp4')[1][:-4], 'Sunday - edited audio 2')
 
 
 class Names(unittest.TestCase):

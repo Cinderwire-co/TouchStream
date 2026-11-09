@@ -106,7 +106,7 @@ function Shell({ onSignOut, ai, version }) {
 function App() {
   const [state, setState] = useState(null);
   const refresh = () => api('GET', '/api/state').then((s) => {
-    Object.assign(hubEnv, { local: s.local, platform: s.platform });
+    Object.assign(hubEnv, { local: s.local, platform: s.platform, audio: s.audio || 'MP3' });
     setState(s);
   });
   useEffect(() => {

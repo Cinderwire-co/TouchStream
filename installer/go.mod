@@ -3,6 +3,7 @@ module github.com/Cinderwire-co/TouchStream/installer
 go 1.27.3
 
 require (
+	github.com/klauspost/compress v1.18.0
 	github.com/ulikunitz/xz v0.5.17
 	github.com/wailsapp/wails/v2 v2.17.1
 )
