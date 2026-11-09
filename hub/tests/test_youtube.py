@@ -1,5 +1,6 @@
 """YouTube channels: TouchStream's shared Google sign-in (read from cinderwire.co), your own client first, each channel
 keeping the client it connected with; disconnecting one gives the hub's access back to Google, and forgets it either way"""
+import json
 import shutil
 import tempfile
 import time
@@ -127,6 +128,64 @@ class SharedClient(unittest.TestCase):
         self.reachable = True
         self.assertTrue(self.youtube.configured())
         self.assertEqual(self.reads, 2)
+
+
+
+class EditingBroadcasts(unittest.TestCase):
+    """An edit reaches YouTube the way YouTube takes it: an upcoming broadcast's as a broadcast update (its times
+    included); a live or finished one's on its video, keeping the video's other details"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.db = Database(self.tmp / 'hub.db')
+        self.youtube = YouTube(self.db)
+        self.sent = []
+
+        def handler(request):
+            body = json.loads(request.content) if request.content else None
+            self.sent.append((request.method, request.url.path, dict(request.url.params), body))
+            if request.method == 'GET' and request.url.path.endswith('/videos'):
+                return httpx.Response(200, json={'items': [{'id': 'b1',
+                    'snippet': {'title': 'Old', 'categoryId': '29', 'tags': ['church'], 'liveBroadcastContent': 'live'},
+                    'status': {'privacyStatus': 'public', 'uploadStatus': 'processed', 'embeddable': False, 'license': 'youtube',
+                               'madeForKids': False, 'selfDeclaredMadeForKids': False}}]})
+            return httpx.Response(200, json={})
+        self.youtube.http = httpx.Client(transport=httpx.MockTransport(handler))
+        self.youtube.channel = lambda row_id: {'id': row_id, 'access_token': 'at', 'token_expires': time.time() + 3600, 'client_id': None}
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def event(self, state, start_in):
+        return {'title': 'Sunday Service (edited)', 'description': 'New words', 'privacy': 'unlisted', 'made_for_kids': 0,
+                'latency': 'normal', 'state': state, 'start_at': time.time() + start_in, 'end_at': None}
+
+    def push(self, event):
+        from touchstream_hub.broadcasts import Broadcasts
+        Broadcasts(self.db, self.youtube)._push_edit({'id': 1, 'access_token': 'at', 'token_expires': time.time() + 3600}, 'b1', event)
+
+    def test_an_upcoming_broadcast_is_updated_with_its_times(self):
+        self.push(self.event('scheduled', 3600))
+        method, path, params, body = self.sent[-1]
+        self.assertEqual((method, path, params['part']), ('PUT', '/youtube/v3/liveBroadcasts', 'snippet,status'))
+        self.assertEqual(body['snippet']['title'], 'Sunday Service (edited)')
+        self.assertIn('scheduledStartTime', body['snippet'])
+
+    def test_a_live_broadcast_is_edited_on_its_video_keeping_its_details(self):
+        self.push(self.event('live', -600))
+        method, path, params, body = self.sent[-1]
+        self.assertEqual((method, path, params['part']), ('PUT', '/youtube/v3/videos', 'snippet,status'))
+        self.assertEqual(body['snippet'], {'title': 'Sunday Service (edited)', 'description': 'New words', 'categoryId': '29', 'tags': ['church']})
+        self.assertEqual(body['status']['privacyStatus'], 'unlisted')
+        self.assertFalse(body['status']['embeddable'], 'its other settings are kept')
+        self.assertNotIn('uploadStatus', body['status'])
+        self.assertNotIn('madeForKids', body['status'])
+
+    def test_one_past_its_start_time_is_edited_on_its_video_too(self):
+        self.push(self.event('scheduled', -30))
+        self.assertEqual(self.sent[-1][1], '/youtube/v3/videos')
+        self.push(self.event('ended', -7200))
+        self.assertEqual(self.sent[-1][1], '/youtube/v3/videos')
 
 
 if __name__ == '__main__':

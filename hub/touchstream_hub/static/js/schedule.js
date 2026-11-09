@@ -114,13 +114,16 @@ export function ConnectChannelModal({ onClose }) {
     if (!flow || !['starting', 'pending'].includes(state.status)) return;
     const result = await api('GET', `/api/youtube/connect/${flow.id}`);
     setState(result);
-    if (result.status === 'connected') setTimeout(onClose, 1500);
   }, 2000, [flow, state.status]);
   return html`<${Modal} title="Connect a YouTube channel" onClose=${onClose}>
     ${state.status === 'error' || state.status === 'denied' || state.status === 'expired'
       ? html`<p class="error">${state.status === 'denied' ? 'Access was declined.' : state.status === 'expired'
         ? 'The code expired. Close this and try again.' : state.error}</p>`
-      : state.status === 'connected' ? html`<p><b>${state.channel.title}</b> is connected.</p>`
+      : state.status === 'connected' ? html`<p><b>${state.channel.title}</b> is connected.</p>
+        <p class="muted">Give it a look of its own: a default thumbnail for its broadcasts, and an intro, outro and watermark for its
+          edited videos. You can do it any time in Settings › Brands.</p>
+        <div class="modal-foot"><button class="btn ghost" onClick=${onClose}>Later</button>
+          <a class="btn primary" href=${`#/settings/brands/channel-${state.channel.id}`} onClick=${() => setTimeout(onClose, 0)}>Set up its brand</a></div>`
       : html`<div class="form">
         <ol class="steps">
           <li>On any phone or computer, open <a href=${flow ? flow.verification_url : '#'} target="_blank" rel="noopener">

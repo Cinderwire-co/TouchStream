@@ -104,6 +104,7 @@ async def lifespan(app):
     hub.retention = Retention(hub.db, hub.library)
     hub.retention.start()
     hub.media = Media(hub.db)
+    hub.broadcasts.thumbnail_for = hub.media.channel_thumbnail   # a brand's default thumbnail
     hub.editor = Editor(hub.db, hub.youtube, hub.library, hub.media)
     hub.editor.start()
     hub.transcriber = Transcriber(hub.db, hub.library)
@@ -1399,11 +1400,12 @@ def create_short(event_id: int, data: dict = Body()):
 
 
 @app.get('/api/titles/preview.png', dependencies=[Depends(admin)])
-def title_preview(style: str = 'lower_third', text: str = '', sub: str = '', width: int = 1920, height: int = 1080):
-    """A title exactly as the edit will show it, for the editor's preview."""
+def title_preview(style: str = 'lower_third', text: str = '', sub: str = '', accent: str = '', width: int = 1920, height: int = 1080):
+    """A title exactly as the edit will show it, for the editor's preview (accent: the brand's title color)."""
     from . import titles
     out = io.BytesIO()
-    titles.draw({'style': style, 'text': text, 'sub': sub}, max(320, min(3840, width)), max(180, min(2160, height))).save(out, 'PNG')
+    titles.draw({'style': style, 'text': text, 'sub': sub}, max(320, min(3840, width)), max(180, min(2160, height)),
+                accent or None).save(out, 'PNG')
     return Response(out.getvalue(), media_type='image/png', headers={'Cache-Control': 'max-age=86400'})
 
 

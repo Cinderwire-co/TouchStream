@@ -301,6 +301,27 @@ class YouTube:
                     progress(offset / size)
         raise YouTubeError('Upload ended without a video id')
 
+    def update_video(self, channel, video_id, event):
+        """A broadcast's title, description, privacy and made-for-kids, changed on its video: how a broadcast that's
+        live, over, or past its start time is edited (liveBroadcasts.update wants a start time in the future). The
+        video's other details (category, tags, language, embedding, license) are kept, as an update replaces the
+        whole of each part it sends."""
+        items = self._call(channel, 'GET', 'videos', params={'part': 'snippet,status', 'id': video_id}).get('items', [])
+        if not items:
+            raise YouTubeError("That broadcast's video isn't on YouTube any more")
+        old = items[0].get('snippet') or {}
+        snippet = {'title': event['title'][:100], 'description': (event['description'] or '')[:5000],
+                   'categoryId': old.get('categoryId') or '22'}
+        for keep in ('tags', 'defaultLanguage', 'defaultAudioLanguage'):
+            if old.get(keep):
+                snippet[keep] = old[keep]
+        status = {k: v for k, v in (items[0].get('status') or {}).items()
+                  if k not in ('uploadStatus', 'failureReason', 'rejectionReason', 'madeForKids', 'publishAt')}
+        status['privacyStatus'] = event['privacy']
+        status['selfDeclaredMadeForKids'] = bool(event['made_for_kids'])
+        self._call(channel, 'PUT', 'videos', params={'part': 'snippet,status'},
+                   json={'id': video_id, 'snippet': snippet, 'status': status})
+
     def set_privacy(self, channel, video_id, privacy):
         """Change a video's privacy, keeping its other status settings (update replaces the whole part)."""
         items = self._call(channel, 'GET', 'videos', params={'part': 'status', 'id': video_id}).get('items', [])

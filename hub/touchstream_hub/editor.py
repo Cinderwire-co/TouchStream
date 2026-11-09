@@ -387,6 +387,11 @@ class Editor:
         path = self.media.path(row['id']) if row else None
         return {**row, 'path': str(path)} if path else None
 
+    def title_color(self, brand_id):
+        """A brand's color for titles, or None (TouchStream's)."""
+        brand = self.media.brand(int(brand_id)) if str(brand_id or '').isdigit() else None
+        return brand['title_color'] if brand else None
+
     def brand_look(self, brand_id):
         """A brand's watermark for render_command, or None."""
         brand = self.media.brand(int(brand_id)) if str(brand_id or '').isdigit() else None
@@ -472,11 +477,11 @@ class Editor:
         normal = normalize(edit['spec'], duration, self.resolve)
         width, height, _ = video_info(source)
         with tempfile.TemporaryDirectory() as tmp:
-            images = []
+            images, accent = [], self.title_color(normal['brand'])
             for k, title in enumerate(normal['titles']):
                 from . import titles   # needs Pillow
                 images.append(Path(tmp) / f'title-{k}.png')
-                titles.draw(title, width, height).save(images[-1])
+                titles.draw(title, width, height, accent).save(images[-1])
             cmd, total = render_command(source, edit['spec'], duration, partial, images,
                                         lambda n: self.library.embed_args(event, n), self.resolve,
                                         self.brand_look(normal['brand']))
@@ -543,6 +548,8 @@ class Editor:
                 if thumb and thumb.exists():
                     self.youtube.set_thumbnail(channel, video_id, thumb.read_bytes(),
                                                'image/png' if thumb.suffix == '.png' else 'image/jpeg')
+                elif brand_thumb := self.media.channel_thumbnail(channel_id):   # the channel's brand, without one of its own
+                    self.youtube.set_thumbnail(channel, video_id, *brand_thumb)
                 hidden = None
                 if request.get('hide_original') in ('private', 'unlisted') and originals.get(channel_id):
                     self.youtube.set_privacy(channel, originals[channel_id], request['hide_original'])

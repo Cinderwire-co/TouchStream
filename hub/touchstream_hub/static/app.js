@@ -84,7 +84,7 @@ function Shell({ onSignOut, ai, version }) {
     : page === 'edit' && id ? html`<${EditorPage} eventId=${id} tab=${sub} />`
     : page === 'transcript' && id ? html`<${TranscriptPage} eventId=${id} />`
     : page === 'shorts' && id ? html`<${EditorPage} eventId=${id} tab="shorts" />`
-    : page === 'settings' ? html`<${SettingsPage} section=${id} />`
+    : page === 'settings' ? html`<${SettingsPage} section=${id} sub=${sub} />`
     : page === 'spokes' ? html`<${SpokesPage} />`
     : html`<${HomePage} />`;
   return html`<div>

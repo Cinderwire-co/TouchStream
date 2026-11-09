@@ -26,6 +26,8 @@ class Broadcasts:
         self.db = db
         self.youtube = youtube
         self.lock = threading.Lock()
+        # a channel's brand thumbnail (media.py channel_thumbnail): for broadcasts that have none of their own
+        self.thumbnail_for = lambda channel_row_id: None
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True).start()
@@ -82,9 +84,12 @@ class Broadcasts:
                 self.db.run(f'UPDATE events SET {field} = ? WHERE id = ?', fields[field], event_id)
         if channel_ids is not None:
             current = {t['channel_id']: t for t in self.targets(event_id)}
+            upcoming = (self.event(event_id) or {}).get('state') == 'scheduled'
             for channel_id, target in current.items():
                 if channel_id not in channel_ids:
-                    self._delete_broadcast(target)
+                    # Only an upcoming broadcast leaves YouTube: once it has aired, it's the channel's video, which stays
+                    if upcoming:
+                        self._delete_broadcast(target)
                     self.db.run('DELETE FROM event_targets WHERE id = ?', target['id'])
             for channel_id in channel_ids:
                 if channel_id not in current:
@@ -187,11 +192,21 @@ class Broadcasts:
                     broadcast_id = self.youtube.create_broadcast(channel, event, dest['yt_stream_id'])
                     self.db.run('UPDATE event_targets SET destination_id = ?, broadcast_id = ? WHERE id = ?',
                                 dest_id, broadcast_id, target['id'])
-                    if image:
-                        self.youtube.set_thumbnail(channel, broadcast_id, *image)
+                    picture = image or self.thumbnail_for(channel['id'])
+                    if picture:
+                        self.youtube.set_thumbnail(channel, broadcast_id, *picture)
                 elif update_existing:
-                    self.youtube.update_broadcast(channel, target['broadcast_id'], event)
+                    self._push_edit(channel, target['broadcast_id'], event)
             self._try(target, work)
+
+    def _push_edit(self, channel, broadcast_id, event):
+        """An edit to YouTube. An upcoming broadcast takes it whole (times included) as a broadcast update; one that's
+        live, over, or past its start time can't (YouTube wants a start time in the future there), so its title,
+        description, privacy and made-for-kids change on its video instead, and its times stay as they were."""
+        if event['state'] == 'scheduled' and event['start_at'] > time.time() + 120:
+            self.youtube.update_broadcast(channel, broadcast_id, event)
+        else:
+            self.youtube.update_video(channel, broadcast_id, event)
 
     def _destination_for(self, spoke, channel):
         """The spoke's reusable YouTube stream on this channel, created the first time."""
