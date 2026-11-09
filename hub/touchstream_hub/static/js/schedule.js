@@ -354,9 +354,13 @@ export function BroadcastModal({ event, planned, spokes, channels, defaultSpoke,
 // ---- Recordings of a broadcast ----
 const COPY_LABEL = { hub: 'Hub recording', spoke: 'Spoke recording' };
 
-/** One Download menu per broadcast: the hub's copy, the spoke's copy (and parts, if any) and the edited video. */
+/** One Download menu per broadcast: the hub's copy, the spoke's copy (and parts, if any), the edited video, and just
+ * the sound of the recording or the edit (an MP3, for a podcast or the website). */
 export function DownloadMenu({ copies, edits = [] }) {
   const ready = edits.filter((e) => e.status === 'done' && e.output);
+  // The sound from the spoke's copy (no network gaps) when it's whole, else the hub's
+  const whole = (source) => copies.filter((c) => c.source === source);
+  const sound = [whole('spoke'), whole('hub')].find((list) => list.length === 1 && list[0].path)?.[0];
   if (!copies.length && !ready.length) return html`<span class="muted small">No recording</span>`;
   const count = { hub: 0, spoke: 0 };
   copies.forEach((c) => { count[c.source] += 1; });
@@ -369,7 +373,9 @@ export function DownloadMenu({ copies, edits = [] }) {
       return c.path
         ? html`<a href=${`/api/recordings/file/${c.path}`} download>${label}<span class="muted">${bytes(c.size)}</span></a>`
         : html`<span class="disabled">${label}<span class="muted">uploading… ${bytes(c.size)}</span></span>`;
-    })}${ready.map((e) => html`<a href=${`/api/recordings/file/${e.output}`} download>Edited video<span class="muted">${fmt(e.duration)}</span></a>`)}</div>
+    })}${ready.map((e) => html`<a href=${`/api/recordings/file/${e.output}`} download>Edited video<span class="muted">${fmt(e.duration)}</span></a>`)}
+    ${sound && html`<a href=${`/api/recordings/audio/${sound.path}`} download>Audio only<span class="muted">${hubEnv.audio}</span></a>`}
+    ${ready.map((e) => html`<a href=${`/api/recordings/audio/${e.output}`} download>Edited video · audio only<span class="muted">${hubEnv.audio}</span></a>`)}</div>
   </details>`;
 }
 

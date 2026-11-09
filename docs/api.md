@@ -77,5 +77,12 @@ does. For example:
 curl -H "Authorization: Bearer ts_..." http://192.168.1.20:8080/api/events
 ```
 
+Recordings download from `/api/recordings/file/<path>`, and just their sound, as an MP3 for a podcast or website,
+from `/api/recordings/audio/<path>` (`get_broadcast` gives both paths for each recording):
+
+```bash
+curl -OJ -H "Authorization: Bearer ts_..." http://192.168.1.20:8080/api/recordings/audio/library/12
+```
+
 GET requests need read access; anything that changes something needs control. Settings, the old-recordings rules
 and YouTube's sign-in need admin.

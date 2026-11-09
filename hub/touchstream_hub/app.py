@@ -8,12 +8,14 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 import threading
 import time
 import zoneinfo
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
@@ -28,7 +30,7 @@ from .broadcasts import THUMBNAIL_MAX, THUMBNAIL_TYPES, Broadcasts
 from .db import Database
 from .editor import COLOR, PEAKS_PER_SECOND, Editor, filmstrip, normalize, placements, probe_duration, waveform
 from .media import Media
-from .library import Library, safe_name
+from .library import Library, audio_command, makes_mp3, safe_name
 from .mediamtx import MediaMTX
 from .restream import Restreamer
 from .retention import Retention
@@ -298,7 +300,7 @@ def state(request: Request):
     token = request.cookies.get(auth.SESSION_COOKIE)
     signed = bool(token and hub.sessions.valid(token))
     return {'version': VERSION, 'setup_needed': not hub.db.get_setting('admin_password'), 'signed_in': signed,
-            'local': is_local(request), 'platform': desktop.PLATFORM,
+            'local': is_local(request), 'platform': desktop.PLATFORM, 'audio': 'MP3' if makes_mp3() else 'M4A',
             # The assistant: on with an OpenRouter key; 'asked' once the key was offered at setup (or skipped)
             **({'ai': {'enabled': hub.assistant.enabled(), 'asked': bool(hub.db.get_setting('ai_asked'))},
                 'update': update_notice()} if signed else {})}
@@ -1563,6 +1565,27 @@ def download_recording(relative: str):
     if not path:
         raise HTTPException(404)
     return FileResponse(path, filename=path.name)
+
+
+@app.get('/api/recordings/audio/{relative:path}', dependencies=[Depends(admin)])
+def download_audio(relative: str):
+    """Just the sound of a recording, edit or short: an MP3 (M4A if this FFmpeg can't make MP3s), made as it
+    downloads, so it starts straight away at any length."""
+    path = hub.library.resolve(relative)
+    if not path:
+        raise HTTPException(404)
+    cmd, name = audio_command(path)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+    def sound():
+        try:
+            while block := proc.stdout.read(256 * 1024):
+                yield block
+        finally:
+            proc.kill()
+            proc.wait()
+    return StreamingResponse(sound(), media_type='audio/mpeg' if name.endswith('.mp3') else 'audio/mp4',
+                             headers={'Content-Disposition': f"attachment; filename*=UTF-8''{quote(name)}"})
 
 
 @app.delete('/api/recordings/file/{relative:path}', dependencies=[Depends(admin)])

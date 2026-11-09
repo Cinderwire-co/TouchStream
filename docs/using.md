@@ -50,7 +50,7 @@ own broadcast.
 
 Aired broadcasts are under **Schedule > Past**, each with:
 
-- **Download**: the hub's recording, the spoke's recording and the edited video.
+- **Download**: the hub's recording, the spoke's recording and the edited video, and **Audio only**: just the sound, as an MP3 (for a podcast or the church website), of the recording or the edit.
 - **Edit**: a linear editor (see below). Edits are always made from the original recording.
   - **Save draft** keeps your work for later. Leaving with unsaved changes asks first.
   - **Render** makes the edited video. Rendering again replaces it.

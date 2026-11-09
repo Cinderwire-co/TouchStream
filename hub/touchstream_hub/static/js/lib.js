@@ -12,7 +12,7 @@ export const QUALITY = [
 ];
 
 // Where the hub runs (from /api/state): is this browser on the hub's own computer, and which OS
-export const hubEnv = { local: false, platform: 'linux' };
+export const hubEnv = { local: false, platform: 'linux', audio: 'MP3' };   // audio: what Audio only downloads are
 export const revealLabel = () => ({ mac: 'Show in Finder', windows: 'Show in File Explorer' })[hubEnv.platform] || 'Open folder';
 export const reveal = (target = {}) => api('POST', '/api/reveal', target).catch(toast);
 

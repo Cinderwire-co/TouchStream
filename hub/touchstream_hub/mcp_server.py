@@ -203,14 +203,16 @@ async def list_broadcasts(when: Literal['upcoming', 'past'] = 'upcoming', spoke_
 
 @server.tool(annotations=READ)
 async def get_broadcast(broadcast_id: str) -> dict:
-    """One broadcast in full: its details, YouTube links, recordings (with lengths), edit and transcript."""
+    """One broadcast in full: its details, YouTube links, recordings (with lengths, and the API paths to download each
+    or just its sound as an MP3), edit and transcript."""
     event = _event(broadcast_id)
     data = await _call(hub_app.editor_source, event['id'])
     e = data['event']
     item = {**_brief(e, _spoke_names()), 'description': e['description'], 'privacy': e['privacy'],
             'latency': e['latency'], 'auto_start': e['auto_start'],
             'youtube': [{'channel': t['channel'], 'watch': t['watch_url'], 'error': t['error']} for t in e['targets']],
-            'recordings': [{'kind': c['source'], 'seconds': round(c['duration'])} for c in data['copies']]}
+            'recordings': [{'kind': c['source'], 'seconds': round(c['duration']), 'download': f"/api/recordings/file/{c['path']}",
+                            'audio': f"/api/recordings/audio/{c['path']}"} for c in data['copies']]}
     if data['edit']:
         edit = data['edit']
         item['edit'] = {'status': edit['status'], 'seconds': round(edit['duration'] or 0), 'cuts': edit['spec'],
