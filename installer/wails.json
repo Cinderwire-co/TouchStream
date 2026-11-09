@@ -9,7 +9,7 @@
   "info": {
     "companyName": "Cinderwire",
     "productName": "TouchStream Installer",
-    "productVersion": "0.1.3",
+    "productVersion": "0.1.4",
     "copyright": "Copyright (c) 2025 Will Reeves and TouchStream Contributors",
     "comments": "Installs the TouchStream hub and writes spoke cards"
   }
