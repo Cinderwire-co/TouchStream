@@ -6,9 +6,13 @@ That needs no redirect URL, so it works the same for a hub on Coolify, on a LAN
 IP or on localhost. Connect as many channels (Google accounts or Brand Accounts)
 as you like; each keeps its own refresh token.
 
-TOUCHSTREAM_GOOGLE_CLIENT_ID / TOUCHSTREAM_GOOGLE_CLIENT_SECRET can supply the
-OAuth client instead of the Settings page. TOUCHSTREAM_GOOGLE_OAUTH_BASE and
-TOUCHSTREAM_YOUTUBE_API_BASE exist so tests can point at a fake server.
+The OAuth client: TouchStream's own, shared by every hub, which the hub reads from cinderwire.co
+(its ID and secret, nothing else: Google treats a device client's secret as not secret, since it
+ships inside the app; it's kept out of the repository and can be changed without a release). Or the
+owner's own client (Settings > YouTube), or TOUCHSTREAM_GOOGLE_CLIENT_ID / _SECRET, which come first.
+A channel keeps the client it was connected with: its tokens only work with that one.
+TOUCHSTREAM_SHARED_CLIENT=off leaves the shared client out; TOUCHSTREAM_SHARED_CLIENT_URL,
+TOUCHSTREAM_GOOGLE_OAUTH_BASE and TOUCHSTREAM_YOUTUBE_API_BASE exist so tests can point at fakes.
 """
 import os
 import secrets
@@ -17,10 +21,16 @@ from datetime import datetime, timezone
 
 import httpx
 
+from . import VERSION
+
 OAUTH_BASE = os.environ.get('TOUCHSTREAM_GOOGLE_OAUTH_BASE', 'https://oauth2.googleapis.com')
 API_BASE = os.environ.get('TOUCHSTREAM_YOUTUBE_API_BASE', 'https://www.googleapis.com')
 SCOPE = 'https://www.googleapis.com/auth/youtube'
 DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code'
+SHARED_URL = os.environ.get('TOUCHSTREAM_SHARED_CLIENT_URL', 'https://cinderwire.co/api/touchstream/google-client')
+SHARED = os.environ.get('TOUCHSTREAM_SHARED_CLIENT', 'on').lower() not in ('off', '0', 'no', 'false')
+SHARED_EVERY = 86400   # read again daily (it can change without a release)
+SHARED_RETRY = 600     # ...or after 10 minutes, if cinderwire.co couldn't be reached
 
 
 class YouTubeError(Exception):
@@ -37,11 +47,49 @@ class YouTube:
         self.flows = {}   # flow id -> device-flow state while someone is signing in
         self.http = httpx.Client(timeout=30)
 
-    # ---- OAuth client (from Settings, or the environment) ----
-    def client(self):
+    # ---- OAuth client: the environment's, your own (Settings), or TouchStream's shared one ----
+    def local_clients(self):
+        """The clients set on this hub, as (id, secret): the environment's, then your own (Settings)."""
+        env = (os.environ.get('TOUCHSTREAM_GOOGLE_CLIENT_ID', ''), os.environ.get('TOUCHSTREAM_GOOGLE_CLIENT_SECRET', ''))
         stored = self.db.get_setting('youtube_client') or {}
-        return (os.environ.get('TOUCHSTREAM_GOOGLE_CLIENT_ID') or stored.get('client_id', ''),
-                os.environ.get('TOUCHSTREAM_GOOGLE_CLIENT_SECRET') or stored.get('client_secret', ''))
+        own = (stored.get('client_id', ''), stored.get('client_secret', ''))
+        return [c for c in (env, own) if all(c)]
+
+    def client(self, client_id=None):
+        """The client new channels connect with (the hub's own, else TouchStream's shared one), or, with client_id,
+        the one a channel was connected with. Reads the shared one from cinderwire.co only when it's needed."""
+        local = self.local_clients()
+        if client_id:
+            found = next((c for c in local if c[0] == client_id), None)
+            shared = None if found else self.shared()
+            return found or (shared if shared and shared[0] == client_id else ('', ''))
+        return local[0] if local else (self.shared() or ('', ''))
+
+    def shared(self, again=False):
+        """TouchStream's shared client, read from cinderwire.co and kept for a day; None without it."""
+        if not SHARED:
+            return None
+        kept = self.db.get_setting('youtube_shared_client') or {}
+        if again or time.time() - kept.get('read_at', 0) > (SHARED_EVERY if kept.get('client_id') else SHARED_RETRY):
+            try:
+                resp = self.http.get(SHARED_URL, timeout=5, headers={'User-Agent': f'TouchStream-Hub/{VERSION}'})
+                data = resp.json() if resp.status_code == 200 else {}
+                if data.get('client_id') and data.get('client_secret'):
+                    kept = {'client_id': data['client_id'], 'client_secret': data['client_secret']}
+            except (httpx.HTTPError, ValueError):
+                pass   # keep what it had (without one, it asks again in 10 minutes)
+            kept['read_at'] = time.time()
+            self.db.set_setting('youtube_shared_client', kept)
+        return (kept['client_id'], kept['client_secret']) if kept.get('client_id') else None
+
+    def which(self):
+        """Which client new channels connect with: 'env', 'own' or 'shared' ('' for none)."""
+        client_id, _ = self.client()
+        if not client_id:
+            return ''
+        if client_id == os.environ.get('TOUCHSTREAM_GOOGLE_CLIENT_ID'):
+            return 'env'
+        return 'own' if client_id == (self.db.get_setting('youtube_client') or {}).get('client_id') else 'shared'
 
     def configured(self):
         return all(self.client())
@@ -51,11 +99,12 @@ class YouTube:
 
     # ---- Connecting a channel (device flow) ----
     def start_connect(self):
-        client_id, _ = self.client()
+        client_id, client_secret = self.client()
         resp = self.http.post(f'{OAUTH_BASE}/device/code', data={'client_id': client_id, 'scope': SCOPE})
         data = self._json(resp)
         flow_id = secrets.token_urlsafe(8)
         self.flows[flow_id] = {'device_code': data['device_code'], 'interval': data.get('interval', 5),
+                               'client': (client_id, client_secret),
                                'expires_at': time.time() + data.get('expires_in', 1800), 'next_poll': 0}
         return {'id': flow_id, 'user_code': data['user_code'],
                 'verification_url': data.get('verification_url') or data.get('verification_uri'),
@@ -68,7 +117,7 @@ class YouTube:
             return {'status': 'expired'}
         if time.time() < flow['next_poll']:
             return {'status': 'pending'}
-        client_id, client_secret = self.client()
+        client_id, client_secret = flow['client']
         resp = self.http.post(f'{OAUTH_BASE}/token', data={
             'client_id': client_id, 'client_secret': client_secret,
             'device_code': flow['device_code'], 'grant_type': DEVICE_GRANT})
@@ -82,9 +131,9 @@ class YouTube:
         if error:
             return {'status': 'denied' if error == 'access_denied' else 'error',
                     'error': data.get('error_description', error)}
-        return {'status': 'connected', 'channel': self._save_channel(data)}
+        return {'status': 'connected', 'channel': self._save_channel(data, client_id)}
 
-    def _save_channel(self, tokens):
+    def _save_channel(self, tokens, client_id=None):
         access = tokens['access_token']
         resp = self.http.get(f'{API_BASE}/youtube/v3/channels', params={'part': 'snippet', 'mine': 'true'},
                              headers={'Authorization': f'Bearer {access}'})
@@ -99,13 +148,13 @@ class YouTube:
         expires = time.time() + tokens.get('expires_in', 3600)
         if existing:
             self.db.run('UPDATE youtube_channels SET title = ?, thumbnail = ?, refresh_token = ?, access_token = ?, '
-                        'token_expires = ?, error = NULL WHERE id = ?',
-                        snippet['title'], thumb, refresh, access, expires, existing['id'])
+                        'token_expires = ?, client_id = ?, error = NULL WHERE id = ?',
+                        snippet['title'], thumb, refresh, access, expires, client_id, existing['id'])
             row_id = existing['id']
         else:
             row_id = self.db.run('INSERT INTO youtube_channels (channel_id, title, thumbnail, refresh_token, '
-                                 'access_token, token_expires, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                                 items[0]['id'], snippet['title'], thumb, refresh, access, expires, time.time())
+                                 'access_token, token_expires, client_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                                 items[0]['id'], snippet['title'], thumb, refresh, access, expires, client_id, time.time())
         return {'id': row_id, 'title': snippet['title'], 'thumbnail': thumb}
 
     def disconnect(self, row_id):
@@ -125,11 +174,10 @@ class YouTube:
     def _token(self, channel):
         if channel['access_token'] and channel['token_expires'] > time.time() + 60:
             return channel['access_token']
-        client_id, client_secret = self.client()
-        resp = self.http.post(f'{OAUTH_BASE}/token', data={
-            'client_id': client_id, 'client_secret': client_secret,
-            'refresh_token': channel['refresh_token'], 'grant_type': 'refresh_token'})
-        data = resp.json()
+        data = self._refresh(channel)
+        if data.get('error') == 'invalid_client' and channel.get('client_id') == (self.shared() or ('',))[0]:
+            self.shared(again=True)   # its secret changed: read it again, and try once more
+            data = self._refresh(channel)
         if 'access_token' not in data:
             message = 'Sign-in expired: reconnect this channel'
             self.db.run('UPDATE youtube_channels SET error = ? WHERE id = ?', message, channel['id'])
@@ -139,6 +187,16 @@ class YouTube:
         self.db.run('UPDATE youtube_channels SET access_token = ?, token_expires = ?, error = NULL WHERE id = ?',
                     channel['access_token'], channel['token_expires'], channel['id'])
         return channel['access_token']
+
+    def _refresh(self, channel):
+        client_id, client_secret = self.client(channel.get('client_id'))
+        resp = self.http.post(f'{OAUTH_BASE}/token', data={
+            'client_id': client_id, 'client_secret': client_secret,
+            'refresh_token': channel['refresh_token'], 'grant_type': 'refresh_token'})
+        try:
+            return resp.json()
+        except ValueError:
+            return {}
 
     def _call(self, channel, method, path, upload=False, **kwargs):
         base = f"{API_BASE}/{'upload/' if upload else ''}youtube/v3"

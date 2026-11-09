@@ -7,6 +7,7 @@ Working notes on what's planned, in rough order. Two rules hold for everything h
 
 ## Done recently
 
+- Connecting YouTube needs nothing set up: hubs use TouchStream's own Google client, read from cinderwire.co (kept out of the repository, changeable without a release); your own client is an option in Settings, and each channel keeps the client it connected with.
 - Spokes that come ready to go: the installer asks where a spoke came from. One sold ready to go (TouchStream on it, its 32 GB card in) is found on the network, paired and named in the installer, with a code on the spoke's screen when the hub can't see the network; a PicoKVM of your own gets a card, as before. **Add spoke** in the dashboard asks for a name once a spoke is adopted or pairs with a code. Plain cards (no hub, no name) for spokes that go to someone else.
 - Removing the hub: the installer's **Remove the hub from this computer**, keeping its settings and recordings or moving them to the Trash (Recycle Bin) too; the scripts' `--uninstall --everything`.
 - Views: each broadcast shows its views on YouTube (its live video, its edited video and its Shorts together), likes and comments, how many are watching while it's live and the peak after; Home adds up the last 30 days; the spoke's screen says how many are watching. Read from YouTube with the permission the hub already has (videos.list, one quota unit for up to 50 videos), every minute while live and less often as videos get older.

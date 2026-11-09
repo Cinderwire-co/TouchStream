@@ -153,5 +153,6 @@ Linux, use `systemctl --user edit touchstream-hub`. In Docker, put them in the c
 | `TOUCHSTREAM_MTX_API_PORT`, `TOUCHSTREAM_MTX_RTSP_PORT`, `TOUCHSTREAM_MTX_HLS_PORT` | MediaMTX's own ports, on this computer only (9997, 8554, 8888): change them and the ones above to run a second hub on the same computer |
 | `TOUCHSTREAM_DISCOVERY` | `0` stops looking for spokes on the network |
 | `TOUCHSTREAM_KEEP_AWAKE` | `0` lets the computer sleep while the hub runs |
-| `TOUCHSTREAM_GOOGLE_CLIENT_ID`, `TOUCHSTREAM_GOOGLE_CLIENT_SECRET` | The YouTube OAuth client, instead of Settings |
+| `TOUCHSTREAM_GOOGLE_CLIENT_ID`, `TOUCHSTREAM_GOOGLE_CLIENT_SECRET` | Your own YouTube OAuth client, instead of Settings (or TouchStream's) |
+| `TOUCHSTREAM_SHARED_CLIENT=off` | Don't read TouchStream's shared Google client from cinderwire.co |
 | `TOUCHSTREAM_MEDIAMTX`, `TOUCHSTREAM_FFMPEG`, `TOUCHSTREAM_FFPROBE` | Paths to those programs |

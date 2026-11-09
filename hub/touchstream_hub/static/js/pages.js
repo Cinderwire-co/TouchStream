@@ -19,12 +19,18 @@ function YouTubeSettings() {
     e.preventDefault();
     try { await api('PUT', '/api/youtube/client', form); toast('Saved', 'ok'); load(); } catch (err) { toast(err); }
   };
+  const useShared = async () => {
+    if (!(await confirmAction({ title: 'Use TouchStream’s Google sign-in?', message: 'Your own OAuth client is removed from the hub. Channels connected with it need connecting again.',
+      confirm: 'Use TouchStream’s' }))) return;
+    try { await api('DELETE', '/api/youtube/client'); toast('Using TouchStream’s Google sign-in', 'ok'); load(); } catch (err) { toast(err); }
+  };
   const disconnect = async (c) => {
     if (!(await confirmAction({ title: `Disconnect ${c.title}?`, message: 'Its scheduled broadcasts stop streaming to it, and the hub gives up its access to the channel at Google.',
       confirm: 'Disconnect', danger: true }))) return;
     await api('DELETE', `/api/youtube/channels/${c.id}`); load();
   };
   const client = html`<form class="form" onSubmit=${save}>
+    <p class="muted small">For your own app name on Google’s consent screen, or your own YouTube quota.</p>
     <ol class="steps small">
       <li>In <a href="https://console.cloud.google.com" target="_blank" rel="noopener">Google Cloud Console</a>, create a project
         and enable <b>YouTube Data API v3</b>.</li>
@@ -34,7 +40,7 @@ function YouTubeSettings() {
     <div class="form-row">
       <label class="field"><span>Client ID</span><input type="text" class="mono" value=${form.client_id}
         onInput=${(e) => setForm({ ...form, client_id: e.target.value })} /></label>
-      <label class="field"><span>Client secret ${yt.configured ? '(saved; leave empty to keep)' : ''}</span>
+      <label class="field"><span>Client secret ${yt.uses === 'own' ? '(saved; leave empty to keep)' : ''}</span>
         <input type="password" autocomplete="off" value=${form.client_secret}
           onInput=${(e) => setForm({ ...form, client_secret: e.target.value })} /></label>
     </div>
@@ -48,16 +54,21 @@ function YouTubeSettings() {
       ${yt.channels.length > 0 ? html`<div>${yt.channels.map((c) => html`<div class="row"><${Avatar} channel=${c} size=${28} />
           <div class="grow"><b>${c.title}</b>${c.error && html`<div class="error small">${c.error}</div>`}</div>
           <button class="btn ghost small" onClick=${() => disconnect(c)}>Disconnect</button></div>`)}</div>`
-        : html`<p class="muted small">${yt.configured ? 'No channels yet.' : 'Add your Google OAuth client below first.'}${' '}
+        : html`<p class="muted small">${yt.configured ? 'No channels yet: Connect channel, then enter the code it shows at google.com/device.' : 'Google sign-in isn’t reachable yet (see below).'}${' '}
             Without YouTube, every broadcast is still recorded to download and upload yourself.</p>`}
     </div>
     <div class="panel form">
       <h2>Google sign-in</h2>
-      ${yt.from_env ? html`<p class="muted">The OAuth client is set by environment variables.</p>`
-        : yt.configured ? html`<p class="muted">Channels sign in with your own Google OAuth client:
+      ${yt.uses === 'env' ? html`<p class="muted">The OAuth client is set by environment variables.</p>`
+        : yt.uses === 'own' ? html`<p class="muted">Channels sign in with your own Google OAuth client:
             <span class="mono small">${yt.client_id}</span></p>
-          <details class="more"><summary>Change the OAuth client</summary>${client}</details>`
-        : html`<p class="muted">Connecting channels needs a Google OAuth client of your own. It takes about ten minutes, once.</p>${client}`}
+          <details class="more"><summary>Change the OAuth client</summary>${client}</details>
+          ${yt.shared && html`<div><button class="btn ghost small" onClick=${useShared}>Use TouchStream’s instead</button></div>`}`
+        : yt.uses === 'shared' ? html`<p class="muted">Channels sign in with TouchStream’s Google sign-in: there’s nothing
+            to set up. The hub still talks to YouTube directly, and each channel’s sign-in stays on this hub.</p>
+          <details class="more"><summary>Use your own Google OAuth client</summary>${client}</details>`
+        : html`<p class="muted">The hub couldn’t reach TouchStream’s Google sign-in at cinderwire.co. It tries again every
+            few minutes; check this computer is online. Or use a Google OAuth client of your own:</p>${client}`}
     </div>
     ${connecting && html`<${ConnectChannelModal} onClose=${() => { setConnecting(false); load(); }} />`}`;
 }
